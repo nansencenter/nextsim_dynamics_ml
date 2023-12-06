@@ -100,12 +100,12 @@ def bin_to_torchGraph(
             raise ValueError("None of the features specified is on the graph")
 
         #find all distinct (undirected) edges from every triangle
-        edges = []
-        for triangle in hour_graph['t']:
-            edges += [ tuple(triangle[:2]), tuple(triangle[1:]), tuple(triangle[[0,-1]]) ] #tuples since we set() it later
-
-        # Get a unique set and convert it to a torch tensor
-        edges = torch.tensor(list(set(edges))).t()
+        edges = np.concatenate([
+            hour_graph['t'].transpose()[:2],
+            hour_graph['t'].transpose()[1:],
+            hour_graph['t'].transpose()[0:-1]
+        ],axis=-1)
+        edges = torch.tensor(np.unique(edges,axis=-1))
 
         #Now we need to consult x,y coordinates of each node of the edges and compute the edge distance
         # for each each row of edge ends we retrieve this info by index

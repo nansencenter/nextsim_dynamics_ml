@@ -7,7 +7,7 @@ class Ice_graph_dataset(Dataset):
 
         # Define multiple instances of Data objects
         self.data_list = data_list
-        self.transform = NormalizeFeatures(attrs=['x','edge_attr'])
+        self.transform = NormalizeFeatures(attrs=['x','edge_attr','y'])
 
     def len(self):
         return len(self.data_list)

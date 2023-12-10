@@ -5,6 +5,88 @@ from tqdm import tqdm
 from torch_geometric.data import Data
 
 
+def get_trajectories(
+    element_graphs:list[dict],
+    element_index:int,
+    iter=None
+    ):
+    """
+    Given a list of element graphs, return the trajectories of the nodes that compose the element
+    
+    Arguments:
+        element_graphs : list
+            List of element graphs
+        element_index : int
+            index to of element to track
+        iter: int
+            iterations to track, if None, compute all trajectory
+    returns:
+        trajectories : torch.tensor"""
+    
+    #Get target element's nodes
+    nodes = element_graphs[0]['t'][element_index]
+    #Get nodes indeces
+    node_idx = element_graphs[0]['i'][nodes]
+
+    x,y = [],[]
+    for i,hour in enumerate(element_graphs):
+        if iter is None or i<iter:
+            #having 3 separate index is necesary to keep track of each in x,y
+            idx_1 = np.where(hour['i']==node_idx[0])[0]
+            idx_2 = np.where(hour['i']==node_idx[1])[0]
+            idx_3 = np.where(hour['i']==node_idx[2])[0]
+            if len(idx_1)>0 and len(idx_2)>0 and len(idx_3)>0:
+                    x.append(hour['node_x'][[idx_1,idx_2,idx_3]])
+                    y.append(hour['node_y'][[idx_1,idx_2,idx_3]])
+
+        
+    x = np.stack(x)
+    y = np.stack(y)
+
+    trajectories = torch.stack([torch.tensor(x),torch.tensor(y)],dim=0).squeeze()
+    return trajectories
+
+
+
+
+def interpolate_node_into_element(
+        bin_files: list[dict],
+):
+    """
+    Function to interpolate the element information into the neighbouring nodes.
+
+    Arguments:
+        bin_files: list[dict]
+            list of dictionaries containing nextsim outputs        
+    returns:
+        element_graphs: list[dict]
+            list of dictionaries containing the element based graphs
+    """
+
+    
+    element_graphs = []
+
+    for file in tqdm(bin_files,"Interpolating node info into elements"):
+        #fetch all node features
+        node_features = [feat for feat in file.keys() if file[feat].shape == file['i'].shape and feat != 'i']
+        #create a element graph
+        element_graph = {
+            key:item for key,item in file.items() if key not in node_features and key != 'i'
+        }
+        #Average quantities
+        for feature in node_features:
+            element_graph[feature] = (file[feature][file['t']].sum(axis=-1)/3)
+        
+        #keep track of x,y
+        element_graph['node_x'] = file['x']
+        element_graph['node_y'] = file['y']
+
+        element_graphs.append(element_graph)
+       
+
+    return element_graphs
+
+
 
 
 def interpolate_element_into_nodes(
@@ -25,7 +107,7 @@ def interpolate_element_into_nodes(
         bin_files: list[dict]
             list of dictionaries containing the interpolated information
     """
-
+        
     for file in tqdm(bin_files,"Interpolating features from element to nodes..."):
 
         
@@ -55,7 +137,7 @@ def interpolate_element_into_nodes(
 def bin_to_torchGraph(
         bin_files: list[dict],
         features_list: list[str],
-        target_idx: int
+        target_element: int
 ):
 
     """
@@ -83,7 +165,7 @@ def bin_to_torchGraph(
     for idx,hour_graph in tqdm(enumerate(bin_files),"Converting bins to torch graphs..."):
 
         #get the next pos of target node
-        target_coords = torch.tensor([bin_files[idx+1]['x'][target_idx],bin_files[idx+1]['y'][target_idx]])
+        target_coords = get_trajectories(element_graphs[i:],target_element,1)
 
         #concat all node features sequentially (following index(t) number) in a tensor
         features = []

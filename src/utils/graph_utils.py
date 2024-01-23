@@ -12,7 +12,7 @@ def get_trajectories(
     ):
     """
     Given a list of element graphs, return the trajectories of the nodes that compose the element
-    
+
     Arguments:
         element_graphs : list
             List of element graphs
@@ -22,30 +22,30 @@ def get_trajectories(
             iterations to track, if None, compute all trajectory
     returns:
         trajectories : torch.tensor"""
-    
+
     #Get target element's nodes
     nodes = element_graphs[0]['t'][element_index]
     #Get nodes indeces
-    node_idx = element_graphs[0]['i'][nodes]
+    node_i = element_graphs[0]['i'][nodes]
 
     x,y = [],[]
     for i,hour in enumerate(element_graphs):
         if iter is None or i<iter:
+            #we need to retrieve the position (idx) of each node by index i
             #having 3 separate index is necesary to keep track of each in x,y
-            idx_1 = np.where(hour['i']==node_idx[0])[0]
-            idx_2 = np.where(hour['i']==node_idx[1])[0]
-            idx_3 = np.where(hour['i']==node_idx[2])[0]
+            idx_1 = np.where(hour['i']==node_i[0])[0]
+            idx_2 = np.where(hour['i']==node_i[1])[0]
+            idx_3 = np.where(hour['i']==node_i[2])[0]
             if len(idx_1)>0 and len(idx_2)>0 and len(idx_3)>0:
                     x.append(hour['node_x'][[idx_1,idx_2,idx_3]])
                     y.append(hour['node_y'][[idx_1,idx_2,idx_3]])
 
-        
+
     x = np.stack(x)
     y = np.stack(y)
 
     trajectories = torch.stack([torch.tensor(x),torch.tensor(y)],dim=0).squeeze()
     return trajectories
-
 
 
 

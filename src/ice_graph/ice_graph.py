@@ -315,33 +315,42 @@ class Ice_graph(Nextsim_data):
         """
         
         data = self.get_item(time_index,elements=False)
-        #get the neighbours
-        neighbours = self.get_closer_neighbours(element_index,n_neighbours,time_index,elements=False)
+        
 
         #get target coordinates for the element
         target = self.get_trajectories(time_index,element_index,target_iter+1,predict_element)[:,1:]
         if target.shape[1] != target_iter:
             return None #skip vertexs / elements that disapear
         target = target.flatten().to(torch.float32)
-        #get node features for vertex information
-        node_features, features_indeces = self.__get_node_features(data,features,neighbours)
 
-        #Edge features are the edges between the neighbours #WIP really slow computation to fetch neighbours
+        #get the neighbours
+        neighbours = self.get_closer_neighbours(element_index,n_neighbours,time_index,elements=True)
+        #get the triangle vertexs of the neighbours
+        triangles = data['t'][neighbours]
+        #get_vertex neighbours indices
+        vertex_neighbours = np.unique(triangles.flatten())
+
+        #get node features for vertex information
+        node_features, features_indeces = self.__get_node_features(data,features,vertex_neighbours)
+
+        #Edge features are the edges between the vertex_neighbours
         #Retrieve vertex conectivity from the mesh for the given vertexs 
         edge_features = np.concatenate([
-            data['t'].transpose()[:2],
-            data['t'].transpose()[1:],
-            data['t'].transpose()[0:-1]
+            triangles.transpose()[:2],
+            triangles.transpose()[1:],
+            triangles.transpose()[[0,-1]]
         ],axis=-1)
-        #remove duplicates since its an undirected graph
-        edge_features = np.unique(edge_features,axis=-1)
+        edge_features = np.unique(edge_features,axis=-1)   
+       
+      
         #select only the edges that are between the neighbour
-        edge_features = torch.tensor([
+        edge_features = torch.tensor(np.array([
             #np.where to get the index of the pair in neighbours (same index as node_features)
-            [ np.where(neighbours==pair[0])[0], np.where(neighbours==pair[1])[0] ] 
+            [ np.where(vertex_neighbours==pair[0])[0], np.where(vertex_neighbours==pair[1])[0] ] 
             for pair in edge_features.transpose() 
-            if np.isin(pair,neighbours).all(axis=-1)
-        ]).squeeze()
+            if np.isin(pair,vertex_neighbours).all(axis=-1)
+        ])).squeeze().t()
+
 
         coord_idx = [i for i,key in enumerate(features_indeces) if key in ['x','y']]
         if len(coord_idx)==2:

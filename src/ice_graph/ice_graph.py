@@ -254,10 +254,15 @@ class Ice_graph(Nextsim_data):
         neighbours = self.get_closer_neighbours(element_index,n_neighbours,time_index)
 
         #get target coordinates
-        target = self.get_trajectories(time_index,element_index,target_iter+1,predict_element)[:,1:]
-        if target.shape[1] != target_iter:
+        target = self.get_trajectories(time_index,element_index,target_iter+1,predict_element)
+        if len(target.shape)==1 or target.shape[1] != target_iter+1:
             return None #skip vertexs / elements that disapear
-        target = target.flatten().to(torch.float32)
+        target = target[:,1:].flatten().to(torch.float32)/1000 #tokm
+        #store initial coordinates for visulisazion
+        x_center = data['x'][element_index]
+        y_center = data['y'][element_index]
+        element_coords = np.array([x_center,y_center])/1000 #tokm
+        y = (target,element_coords)
 
         #get node features
         node_features, features_indeces = self.__get_node_features(data,features,neighbours)
@@ -281,7 +286,7 @@ class Ice_graph(Nextsim_data):
             raise ValueError("Unable to find coordinates for nodes in mesh data. \nDid you include it in the feature list?")
        
         #Now we can create our torch-geometric graph using the "Data" class
-        graph = Data(x=node_features, edge_index=edge_features, edge_attr=edge_dist,pos=positions, y=target)
+        graph = Data(x=node_features, edge_index=edge_features, edge_attr=edge_dist,pos=positions, y=y)
 
         return graph
 
@@ -315,13 +320,18 @@ class Ice_graph(Nextsim_data):
         """
         
         data = self.get_item(time_index,elements=False)
-        
+        element_data = self.get_item(time_index,elements=True)
 
         #get target coordinates for the element
-        target = self.get_trajectories(time_index,element_index,target_iter+1,predict_element)[:,1:]
-        if target.shape[1] != target_iter:
+        target = self.get_trajectories(time_index,element_index,target_iter+1,predict_element)
+        if len(target.shape)==1 or target.shape[1] != target_iter+1:
             return None #skip vertexs / elements that disapear
-        target = target.flatten().to(torch.float32)
+        target = target[:,1:].flatten().to(torch.float32)/1000 #tokm
+        #store initial coordinates for visulisazion
+        x_center = element_data['x'][element_index]
+        y_center = element_data['y'][element_index]
+        element_coords = np.array([x_center,y_center])/1000 #tokm
+        y = (target,element_coords)
 
         #get the neighbours
         neighbours = self.get_closer_neighbours(element_index,n_neighbours,time_index,elements=True)
@@ -366,7 +376,7 @@ class Ice_graph(Nextsim_data):
             raise ValueError("Unable to find coordinates for nodes in mesh data. \nDid you include it in the feature list?")
        
         #Now we can create our torch-geometric graph using the "Data" class
-        graph = Data(x=node_features, edge_index=edge_features, edge_attr=edge_dist,pos=positions, y=target)
+        graph = Data(x=node_features, edge_index=edge_features, edge_attr=edge_dist,pos=positions, y=y)
 
         return graph
     
@@ -473,5 +483,5 @@ class Ice_graph(Nextsim_data):
                 )
                 for edge_row in edge_features
             ]
-        edge_dist = torch.norm(edges_coordinates[1] - edges_coordinates[0],dim=0).unsqueeze(dim=-1).to(torch.float32)
+        edge_dist = torch.norm(edges_coordinates[1] - edges_coordinates[0],dim=0).unsqueeze(dim=-1).to(torch.float32)/1000 #convert to km
         return edge_dist

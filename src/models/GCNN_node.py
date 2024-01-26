@@ -6,10 +6,10 @@ from torch_geometric.nn import ChebConv
 
 class GCNN_node(nn.Module):
 
-    def __init__(self, num_features, hidden_channels, output_size):
+    def __init__(self, num_features, hidden_channels, output_size,dropout=0):
         super(GCNN_node, self).__init__()
         # conv layers as a test [WIP]
-        self.conv1 = ChebConv(num_features, hidden_channels,K=1)
+        self.conv1 = ChebConv(num_features, hidden_channels,K=1,dropout=dropout)
         self.fc = nn.Linear(hidden_channels, output_size)
 
     def forward(self, x, edge_index,edge_attr):

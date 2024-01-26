@@ -57,7 +57,7 @@ class Nextsim_data():
         for file in self.file_graphs:
             #create a element graph
             element_data = {
-                key:item for key,item in file.items() if key not in vertex_element_features and key != 'i'
+                key:item for key,item in file.items() if key not in vertex_element_features and item.shape != file['i'].shape
             }
             #Average quantities
             for feature in vertex_element_features:

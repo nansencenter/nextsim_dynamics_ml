@@ -26,7 +26,7 @@ def train_model(
     scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
     num_epochs: int,
     device: torch.device,
-    mse: torch.nn.MSELoss,
+    loss: torch.nn,
     train_dataloader: torch.utils.data.DataLoader,
     val_dataloader: torch.utils.data.DataLoader
 ) -> Tuple[List[Optional[float]], List[Optional[float]]]:
@@ -34,13 +34,13 @@ def train_model(
     validation_losses = []
 
     for epoch in range(num_epochs):
-        training_loss = process_dataloader(model, train_dataloader, device, optimizer, scheduler, mse)
+        training_loss = process_dataloader(model, train_dataloader, device, optimizer, scheduler, loss)
         training_losses.append(training_loss)
 
         if epoch % 5 == 0:
             print(f"Epoch {epoch+1}/{num_epochs}, Average Training Loss: {training_loss:.4f}")
 
-        val_loss = process_dataloader(model, val_dataloader, device, criterion=mse)
+        val_loss = process_dataloader(model, val_dataloader, device, criterion=loss)
         validation_losses.append(val_loss)
 
         if epoch % 5 == 0:
@@ -73,11 +73,11 @@ def main(
 
     #usefull to avoid local minimas
     #scheduler = ReduceLROnPlateau(optimizer, 'min')
-    time_index = 4#index of element graph to fetch samples
+    time_index = 1#index of element graph to fetch samples
 
-    n_generations = 600
-    radius = 400000 #meters
-    iterations = 5
+    n_generations = 15000
+    radius = 600000 #meters
+    iterations = 10
     n_neighbours = 4
     val_time_index = time_index+iterations
     #get train and val samples around a central point
@@ -109,19 +109,19 @@ def main(
 
     example_graph = next(iter(train_dataset)) #just to get the num_features
     num_features = example_graph.x.shape[-1]  # Node feature dimension
-    hidden_channels = 12
+    hidden_channels = 8
     num_classes = example_graph.y[0].shape[0] 
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = GCNN_node(num_features, hidden_channels, num_classes).to(device)
+    model = GCNN_node(num_features, hidden_channels, num_classes,dropout=0.3).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.02, weight_decay=5e-4)
-    mse = nn.MSELoss()
+    loss = nn.MSELoss()
     num_epochs = 100
 
     scheduler = ExponentialLR(optimizer, gamma=0.9)
 
     # Define the number of epochs
-    train_model(model, optimizer, scheduler, num_epochs, device, mse, train_dataloader,val_dataloader)
+    train_model(model, optimizer, scheduler, num_epochs, device, loss, train_dataloader,val_dataloader)
 
 
 if __name__ == "__main__":

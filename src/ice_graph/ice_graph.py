@@ -257,7 +257,7 @@ class Ice_graph(Nextsim_data):
         target = self.get_trajectories(time_index,element_index,target_iter+1,predict_element)
         if len(target.shape)==1 or target.shape[1] != target_iter+1:
             return None #skip vertexs / elements that disapear
-        target = target[:,1:].flatten().to(torch.float32)/1000 #tokm
+        target = target.flatten().to(torch.float32)/1000 #tokm
         #store initial coordinates for visulisazion
         x_center = data['x'][element_index]
         y_center = data['y'][element_index]
@@ -326,7 +326,7 @@ class Ice_graph(Nextsim_data):
         target = self.get_trajectories(time_index,element_index,target_iter+1,predict_element)
         if len(target.shape)==1 or target.shape[1] != target_iter+1:
             return None #skip vertexs / elements that disapear
-        target = target[:,1:].flatten().to(torch.float32)/1000 #tokm
+        target = target.flatten().to(torch.float32)/1000 #tokm
         #store initial coordinates for visulisazion
         x_center = element_data['x'][element_index]
         y_center = element_data['y'][element_index]

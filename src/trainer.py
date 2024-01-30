@@ -75,7 +75,7 @@ def main(
     #scheduler = ReduceLROnPlateau(optimizer, 'min')
     time_index = 1#index of element graph to fetch samples
 
-    n_generations = 15000
+    n_generations = 4000
     radius = 600000 #meters
     iterations = 10
     n_neighbours = 4
@@ -116,7 +116,7 @@ def main(
     model = GCNN_node(num_features, hidden_channels, num_classes,dropout=0.3).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.02, weight_decay=5e-4)
     loss = nn.MSELoss()
-    num_epochs = 100
+    num_epochs = 20
 
     scheduler = ExponentialLR(optimizer, gamma=0.9)
 

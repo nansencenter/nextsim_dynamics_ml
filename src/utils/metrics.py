@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 def velocity_from_coords(coords:torch.tensor):
     """
     Function to compute velocity from coordinates

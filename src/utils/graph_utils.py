@@ -19,22 +19,29 @@ def standardize_graph(graph_list: list[Data],normalize_targets:bool = True):
         inv_transform: NormalizeInverse
             The inverse transform to revert the normalization on coordinates.
     """
-    #normalize features
+    #retrive all features as a single tensor
     all_features_tensor = torch.stack([graph.x for graph in graph_list])
     epsilon = 1e-10 #avoid /0
+    #compute mean and std per channel
     std_per_channel_fea = all_features_tensor.std(dim=[0,1]) + epsilon
     mean_per_channel_fea = all_features_tensor.mean(dim=[0,1])
+    #normalize features
     transfrom = T.Normalize(mean=mean_per_channel_fea,std=std_per_channel_fea)
     normalized_features = transfrom(all_features_tensor.moveaxis(-1,0)).moveaxis(0,-1)
     
     
     #normalize targets
     if normalize_targets:
+        #retrive all targets as a single tensor
         all_targets_tensor = torch.stack([graph.y[0] for graph in graph_list])
+        #reshape the tensor to have the shape (2(x,y),n_graphs,2) x,y work as channels in this case
         all_targets_tensor = all_targets_tensor.reshape(-1,2,2).moveaxis(1,0)
+        #fetch mean and std of the input coords
         mean_coords, std_coords = mean_per_channel_fea[-2:], std_per_channel_fea[-2:]
+        #normalize targets
         transfrom = T.Normalize(mean=mean_per_channel_fea[-2:],std=std_per_channel_fea[-2:])
         normalized_targets = transfrom(all_targets_tensor).moveaxis(0,1).reshape(-1,4)
+        #create the inverse transform
         inv_transform = NormalizeInverse(mean=mean_coords,std=std_coords)
     else:
         inv_transform = None

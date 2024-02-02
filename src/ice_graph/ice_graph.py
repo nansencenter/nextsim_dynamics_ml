@@ -262,7 +262,7 @@ class Ice_graph(Nextsim_data):
         x_center = data['x'][element_index]
         y_center = data['y'][element_index]
         element_coords = np.array([x_center,y_center])/1000 #tokm
-        y = (target,element_coords)
+        y = [target,element_coords]
 
         #get node features
         node_features, features_indeces = self.__get_node_features(data,features,neighbours)
@@ -331,7 +331,7 @@ class Ice_graph(Nextsim_data):
         x_center = element_data['x'][element_index]
         y_center = element_data['y'][element_index]
         element_coords = np.array([x_center,y_center])/1000 #tokm
-        y = (target,element_coords)
+        y = [target,element_coords]
 
         #get the neighbours
         neighbours = self.get_closer_neighbours(element_index,n_neighbours,time_index,elements=True)

@@ -208,7 +208,8 @@ class Nextsim_data():
             self,
             time_index:int,
             vertex_i:int,
-            iter=None
+            iter=2,
+            velocity:bool = False
     ):
         """ Function that returns the trajectories of the vertexs that compose the element
 
@@ -230,8 +231,13 @@ class Nextsim_data():
                 x.append(mesh['x'][idx])
                 y.append(mesh['y'][idx])
 
-        x,y = torch.as_tensor(np.array(x)),torch.as_tensor(np.array(y))    
-        return torch.stack([x,y],dim=1).squeeze()
+        x,y = torch.as_tensor(np.array(x)),torch.as_tensor(np.array(y)) 
+        #return velocity instead of positions
+        #v = (coords[:,1,i] - coords[:,1,i+1]) / (1 * 60 * 60)
+        if velocity:   
+            return torch.stack([x,y],dim=1).squeeze().diff(dim=-1).div(60*60)
+        else:
+            return torch.stack([x,y],dim=1).squeeze()
 
         
 

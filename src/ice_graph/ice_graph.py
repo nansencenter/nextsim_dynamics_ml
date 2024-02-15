@@ -432,7 +432,7 @@ class Ice_graph(Nextsim_data):
 
     def get_vertex_centered_graph(
             self,
-            vertex_index,
+            vertex_i,
             time_index:int = 0,
             target_iter:int = 5,
             e_features: list[str] = ['Damage', 'Concentration', 'Thickness', 'M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
@@ -445,7 +445,7 @@ class Ice_graph(Nextsim_data):
 
         Arguments:
             vertex_index: int
-                index of the vertex to sample from
+                i of the vertex to sample from
             time_index: int
                 index of the time to sample from
             target_iter: int
@@ -459,11 +459,13 @@ class Ice_graph(Nextsim_data):
         vertex_data = self.get_item(time_index,elements=False)
         #get the neighbours
 
+
+        #get vertex index
+        vertex_index = np.where(vertex_data['i']==vertex_i)[0][0]
         
         e_neighbours,v_neighbours = self.compute_vertex_neighbourhood(vertex_index=vertex_index,time_index=time_index,return_vertex=include_vertex)
 
         #get target coordinates
-        vertex_i= vertex_data['i'][vertex_index]
         target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=target_iter+1,velocity=velocity)
 
         if (len(target.shape)==1 or target.shape[0] != target_iter+1) and not velocity:

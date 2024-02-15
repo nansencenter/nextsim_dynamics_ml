@@ -3,6 +3,19 @@ import torch
 from torch_geometric.data import Data
 
 
+class IceData(Data):
+   """
+   Overwrite the torch geometric.Data class to adapt data for mini-batch processing
+   """
+   def __cat_dim__(self, key, value, *args, **kwargs):
+        if key == 'edge_index' or key =='pos':  #cat along dim 1
+            return 1
+        elif key == 'x': 
+            return 0 #cat along dim 0
+        elif key == 'y':
+            return None # create a new batch dimension
+        else:
+            return super().__cat_dim__(key, value, *args, **kwargs)
 
 class Nextsim_data():
     """
@@ -200,8 +213,10 @@ class Nextsim_data():
         n_samples = min(n_samples,len(samples))
         samples = np.random.choice(samples,n_samples)
 
+        samples_i = data['i'][samples]
+
         
-        return samples
+        return samples_i
         
 
     def get_vertex_trajectories(
@@ -235,7 +250,7 @@ class Nextsim_data():
         #return velocity instead of positions
         #v = (coords[:,1,i] - coords[:,1,i+1]) / (1 * 60 * 60)
         if velocity:   
-            return torch.stack([x,y],dim=1).squeeze().diff(dim=-1).div(60*60)
+            return torch.stack([x,y],dim=1).squeeze().diff(dim=0).div(60*60)
         else:
             return torch.stack([x,y],dim=1).squeeze()
 
@@ -422,7 +437,8 @@ class Ice_graph(Nextsim_data):
             target_iter:int = 5,
             e_features: list[str] = ['Damage', 'Concentration', 'Thickness', 'M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
             v_features: list[str] = ['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
-            include_vertex:bool = False
+            include_vertex:bool = False,
+            velocity:bool = False
     ):
         """
         Function to get the graph of elements around a given vertex at a given time index.
@@ -448,17 +464,19 @@ class Ice_graph(Nextsim_data):
 
         #get target coordinates
         vertex_i= vertex_data['i'][vertex_index]
-        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=target_iter+1)
+        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=target_iter+1,velocity=velocity)
 
-        if len(target.shape)==1 or target.shape[0] != target_iter+1:
+        if (len(target.shape)==1 or target.shape[0] != target_iter+1) and not velocity:
             return None    #skip vertexs / elements that disapear
+        if velocity and (len(target.shape)==1 or target.shape[0]!=target_iter):
+            return None
         target = target.flatten().to(torch.float32)/1000 #tokm
 
         #store initial coordinates for visulisazion
         vertex_idx = vertex_index
         x_center = vertex_data['x'][vertex_idx]
         y_center = vertex_data['y'][vertex_idx]
-        element_coords = np.array([x_center,y_center])/1000 #tokm
+        element_coords = torch.tensor(np.array([x_center,y_center]))/1000 #tokm
         y = [target,element_coords]
 
         #get node features
@@ -470,7 +488,7 @@ class Ice_graph(Nextsim_data):
         #get edge distances and node positions
         edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
         #Now we can create our torch-geometric graph using the "Data" class
-        e_graph = Data(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions, y=y)
+        e_graph = IceData(x=node_features, edge_index=edge_index,edge_attr=edge_dist,pos=positions,y=y)
         v_graph = None
 
         if include_vertex:
@@ -483,7 +501,7 @@ class Ice_graph(Nextsim_data):
             #get edge distances and node positions
             edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
             #Now we can create our torch-geometric graph using the "Data" class
-            v_graph = Data(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions, y=y)
+            v_graph = IceData(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions, y=y)
 
         return e_graph, v_graph
 

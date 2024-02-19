@@ -2,13 +2,15 @@ import torch
 from typing import Optional,List,Tuple
 
 
+
 def forward_pass(
     model: torch.nn.Module,
     batch: torch.Tensor,
     device: torch.device,
     optimizer: torch.optim.Optimizer = None,
     scheduler: torch.optim.lr_scheduler._LRScheduler = None,
-    criterion: torch.nn.Module = None
+    criterion: torch.nn.Module = None,
+    gradient_clip:int =1
 ):
 
     e_g,v_g = batch[0].to(device),batch[1].to(device)
@@ -18,6 +20,8 @@ def forward_pass(
     loss = criterion(output, e_g.y[0]) if criterion else None
     if optimizer:
         loss.backward()
+        if gradient_clip is not None:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
         optimizer.step()
     return loss.item() if loss else None
 

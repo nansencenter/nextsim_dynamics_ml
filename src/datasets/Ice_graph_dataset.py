@@ -4,7 +4,7 @@ from torch.utils.data import Dataset
 class Ice_graph_dataset(Dataset):
     def __init__(self, data_list, transform = None):
         super(Ice_graph_dataset, self).__init__()
-
+        
         # List of graphs
         self.data_list = data_list
         self.transform = transform

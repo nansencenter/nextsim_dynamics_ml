@@ -4,6 +4,29 @@ from torch_geometric.data import Data
 import torchvision.transforms as T
 
 
+def compute_normalization_batch(graph_list:list):
+    """
+    Compute the normalization transform for the dataset
+
+    Arguments:
+        graph_list: list
+            list of graphs
+
+    Returns:
+        transfrom_e: transform for the element features
+        transform_v: transform for the vertex features   
+    """
+
+    batch_size = len(graph_list)
+    train_dataloader = DataLoader(graph_list, batch_size=batch_size)
+    graphs = next(iter(train_dataloader))
+    std_e,std_v = graphs[0].x.std(dim=0) + 1e-6 , graphs[1].x.std(dim=0) + 1e-6
+    mean_e,mean_v = graphs[0].x.mean(dim=0), graphs[1].x.mean(dim=0)
+    transfrom_e, transform_v = T.Normalize(mean=mean_e,std=std_e), T.Normalize(mean=mean_v,std=std_v)
+    
+    return transfrom_e, transform_v
+
+
 def standardize_graph(graph_list: list[Data],normalize_targets:bool = True):
     """
     Standardize the features of the graphs in the graph_list.

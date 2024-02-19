@@ -516,13 +516,13 @@ class Ice_graph(Nextsim_data):
         e_neighbours,v_neighbours = self.compute_vertex_neighbourhood(vertex_index=vertex_index,time_index=time_index,return_vertex=include_vertex)
 
         #get target coordinates
-        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=target_iter,velocity=velocity)
+        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=target_iter,velocity=velocity).squeeze()
 
-        if target.shape[0] != target_iter and not velocity:
+        if len(target.size())==0 or target.shape[0] != 2:
             return None    #skip vertexs / elements that disapear
-        if velocity and (len(target.shape)==1 or target.shape[0]!=target_iter):
-            return None
-        target = target.flatten().to(torch.float32)/1000 #tokm
+
+        if not velocity:
+            target = target.flatten().to(torch.float32)/1000 #tokm
 
         #store initial coordinates for visulisazion
         vertex_idx = vertex_index
@@ -553,7 +553,7 @@ class Ice_graph(Nextsim_data):
             #get edge distances and node positions
             edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
             #Now we can create our torch-geometric graph using the "Data" class
-            v_graph = IceData(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions, y=y)
+            v_graph = IceData(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions,y=y)
 
         return e_graph, v_graph
 

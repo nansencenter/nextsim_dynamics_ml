@@ -7,16 +7,21 @@ def forward_pass(
     model: torch.nn.Module,
     batch: torch.Tensor,
     device: torch.device,
-    optimizer: Optional[torch.optim.Optimizer] = None,
-    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
-    criterion: Optional[torch.nn.Module] = None
-) -> Optional[float]:
-    batch = batch.to(device)
+    optimizer: torch.optim.Optimizer = None,
+    scheduler: torch.optim.lr_scheduler._LRScheduler = None,
+    criterion: torch.nn.Module = None,
+    gradient_clip:int =1
+):
+
+    e_g,v_g = batch[0].to(device),batch[1].to(device)
     optimizer.zero_grad() if optimizer else None
-    output = model(batch.x, batch.edge_index, batch.edge_attr)
-    loss = criterion(output, batch.y[0]) if criterion else None
+
+    output = model(e_g,v_g)
+    loss = criterion(output, e_g.y[0]) if criterion else None
     if optimizer:
         loss.backward()
+        if gradient_clip is not None:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
         optimizer.step()
     return loss.item() if loss else None
 
@@ -24,10 +29,10 @@ def process_dataloader(
     model: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
     device: torch.device,
-    optimizer: Optional[torch.optim.Optimizer] = None,
-    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
-    criterion: Optional[torch.nn.Module] = None
-) -> Optional[float]:
+    optimizer: torch.optim.Optimizer = None,
+    scheduler: torch.optim.lr_scheduler._LRScheduler= None,
+    criterion: torch.nn.Module = None
+):
     total_loss = 0.0
     model.train() if optimizer else model.eval()
     for batch in dataloader:

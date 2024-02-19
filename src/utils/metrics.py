@@ -8,7 +8,8 @@ def compute_metrics(
         targets:torch.tensor,
         predictions:torch.tensor,
         init_coords:torch.tensor,
-        velocity:bool
+        velocity:bool,
+        iterations:int=1
 ):
     """ 
     Compute metrics for the model
@@ -21,6 +22,8 @@ def compute_metrics(
             initial coordinates
         velocity: bool
             if the model is predicting velocity or coordinates
+        iterations: int
+            number of iterations to predict
     Returns:
         rmse_position: torch.tensor, 
             rmse over position
@@ -48,7 +51,7 @@ def compute_metrics(
     #error over position
     rmse_position = torch.sqrt(torch.mean(mse(target_coords,predicted_coords),dim=[1]))
     #error over velocity
-    if not predict_vel:
+    if not velocity:
             target_coords = torch.stack([init_coords,target_coords.squeeze()],dim=-1)
             predicted_coords = torch.stack([init_coords,predicted_coords.squeeze()],dim=-1)
             target_vel = velocity_from_coords(np.array(target_coords))
@@ -60,7 +63,7 @@ def compute_metrics(
     #angle
     angles = velocity_angle(predicted_vel,target_vel)
 
-    return rmse_position,mae_vel_norm,angles
+    return rmse_position,mae_vel_norm,angles,target_vel,predicted_vel
             
 
 

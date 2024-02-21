@@ -516,13 +516,13 @@ class Ice_graph(Nextsim_data):
         e_neighbours,v_neighbours = self.compute_vertex_neighbourhood(vertex_index=vertex_index,time_index=time_index,return_vertex=include_vertex)
 
         #get target coordinates
-        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=target_iter,velocity=velocity).squeeze()
+        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=target_iter,velocity=velocity).squeeze().to(torch.float32)
 
         if len(target.size())==0 or target.shape[0] != 2:
             return None    #skip vertexs / elements that disapear
 
         if not velocity:
-            target = target.flatten().to(torch.float32)/1000 #tokm
+            target = target.flatten()/1000 #tokm
 
         #store initial coordinates for visulisazion
         vertex_idx = vertex_index

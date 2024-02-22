@@ -17,7 +17,7 @@ def forward_pass(
     optimizer.zero_grad() if optimizer else None
 
     output = model(e_g,v_g)
-    loss = criterion(output, e_g.y[0]) if criterion else None
+    loss = criterion(output, e_g.y[0],e_g.y[1]) if criterion else None
     if optimizer:
         loss.backward()
         if gradient_clip is not None:
@@ -39,3 +39,5 @@ def process_dataloader(
         loss = forward_pass(model, batch, device, optimizer, scheduler, criterion)
         total_loss += loss if loss else 0
     return total_loss / len(dataloader) if total_loss else None
+
+

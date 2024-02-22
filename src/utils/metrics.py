@@ -124,3 +124,40 @@ def velocity_angle(pred_vel,target_vel: torch.tensor):
     dot_products = torch.clip(torch.sum(unit_pred_vel * unit_target_vel, dim=0),-1.0,1.0)
     angles = torch.acos(dot_products) * 180 / np.pi #to degrees
     return angles
+
+
+
+class CustomIceLoos(nn.Module):
+    def __init__(self, A=1,B=0,C=0):
+        super(CustomIceLoos, self).__init__()
+        self.mae = nn.L1Loss()
+        self.A = A
+        self.B = B
+        self.C = C
+
+    def velocity_angle(self,real_v,v_pred):
+        v_pred = v_pred / v_pred.norm(p=2,dim=1).unsqueeze(1)
+        real_v = real_v / real_v.norm(p=2,dim=1).unsqueeze(1)
+        dot = (v_pred*real_v).sum(dim=1)
+        dot = torch.clamp(dot,min=-0.99,max=0.99)
+        return torch.acos(dot).mean()
+
+    def forward(self,v_pred,v_real,init_coords):
+
+        position_pred = v_pred + init_coords
+        position_real = v_real + init_coords
+
+        velocity_error = self.mae(v_real,v_pred)
+        position_error = 0
+        angle_error = 0
+        if self.B >0:
+            position_error = self.mae(position_real,position_pred)
+
+        if self.C >0:
+            angle_error = self.velocity_angle(v_pred,v_real)
+            if torch.isnan(angle_error):
+                print("nan error")
+                    
+        error = self.A * velocity_error + self.B * position_error + self.C * angle_error
+
+        return  error

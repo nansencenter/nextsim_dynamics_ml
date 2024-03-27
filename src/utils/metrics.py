@@ -9,7 +9,9 @@ def compute_metrics(
         predictions:torch.tensor,
         init_coords:torch.tensor,
         velocity:bool,
-        iterations:int=1
+        iterations:int=1,
+        step:int=1,
+        d_time:int=3600
 ):
     """ 
     Compute metrics for the model
@@ -24,6 +26,10 @@ def compute_metrics(
             if the model is predicting velocity or coordinates
         iterations: int
             number of iterations to predict
+        step: int
+            step ahead of prediction
+        d_time: int
+            time step in seconds
     Returns:
         rmse_position: torch.tensor, 
             rmse over position
@@ -38,11 +44,9 @@ def compute_metrics(
         #convert velocity to coordinates
         target_vel = targets.reshape(2,-1).unsqueeze(1)
         predicted_vel = predictions.reshape(2,-1).unsqueeze(1)
-        targets = targets + init_coords
-        predictions = predictions + init_coords
-    else:
-            targets =targets * 1000#to meters
-            predictions = predictions * 1000
+        targets = targets*step*d_time + init_coords
+        predictions = predictions*step*d_time + init_coords
+    
             
     #get original coordinates in meters
     target_coords = torch.stack([targets[:,:iterations],targets[:,iterations:]],dim=1)
@@ -128,12 +132,14 @@ def velocity_angle(pred_vel,target_vel: torch.tensor):
 
 
 class CustomIceLoos(nn.Module):
-    def __init__(self, A=1,B=0,C=0):
+    def __init__(self, A=1,B=0,C=0,step=1,d_time=3600):
         super(CustomIceLoos, self).__init__()
         self.mae = nn.L1Loss()
         self.A = A
         self.B = B
         self.C = C
+        self.step = step
+        self.d_time = d_time
 
     def velocity_angle(self,real_v,v_pred):
         v_pred = v_pred / v_pred.norm(p=2,dim=1).unsqueeze(1)
@@ -144,12 +150,16 @@ class CustomIceLoos(nn.Module):
 
     def forward(self,v_pred,v_real,init_coords):
 
-        position_pred = v_pred + init_coords
-        position_real = v_real + init_coords
+        position_pred = v_pred * self.step * self.d_time + init_coords
+        position_real = v_real * self.step * self.d_time + init_coords
 
-        velocity_error = self.mae(v_real,v_pred)
         position_error = 0
         angle_error = 0
+        velocity_error = 0
+
+        if self.A >0:
+            velocity_error = self.mae(v_real,v_pred)
+
         if self.B >0:
             position_error = self.mae(position_real,position_pred)
 

@@ -9,6 +9,7 @@ __pycache__/
 #data and figures
 data/
 figures/
+data_graphs
 
 # Distribution / packaging
 .Python

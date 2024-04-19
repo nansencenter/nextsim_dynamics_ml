@@ -20,6 +20,11 @@ import os
 from typing import List, Optional,Tuple
 
 
+import wandb
+
+wandb.login()
+
+
 
 def train_model(
     model: torch.nn.Module,
@@ -35,7 +40,7 @@ def train_model(
     validation_losses = []
 
     for epoch in range(num_epochs):
-        training_loss = process_dataloader(model, train_dataloader, device, optimizer, scheduler, loss)
+        training_loss = process_dataloader(model, train_dataloader, device, optimizer, loss)
         training_losses.append(training_loss)
 
         if epoch % 5 == 0:
@@ -54,12 +59,32 @@ def train_model(
 
 def main(
     graph_path: str = "example_data",
-):
+    n_generations: int = 100,
+    predict_vel: bool = True,
+    radius: int = 500000,
+    iterations: int = 1,
+    time_index_train: int = 3,
+    time_index_val: int = 12,
+    center_train: Tuple[int,int] = (0,0),
+    center_val: Tuple[int,int] = (0,0),
+    nextsim_step: int = 1,
+    neighbours: int = 3,
+    save_dir: str = "data_graphs",
+    hidden_channels: Tuple[List[int],List[int]] = ([32,64,128],[32,64,128]),
+    num_epochs: int = 10,
+    lr: float = 0.005,
+    batch_size: int = 128,
+    weight_decay: float = 0.1,
+    gradient_clip: int = 1,
+       
+    ):
     np.random.seed(42)
     print()
     
     file_graphs = [dict(np.load(f'{graph_path}/{file}')) for file in sorted(os.listdir(graph_path)) ]
     print(f'Loaded {len(file_graphs)} graphs')
+
+
 
     nextsim = Ice_graph(
         file_graphs,

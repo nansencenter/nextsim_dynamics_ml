@@ -131,9 +131,9 @@ def velocity_angle(pred_vel,target_vel: torch.tensor):
 
 
 
-class CustomIceLoos(nn.Module):
+class CustomIceLoss(nn.Module):
     def __init__(self, A=1,B=0,C=0,step=1,d_time=3600):
-        super(CustomIceLoos, self).__init__()
+        super(CustomIceLoss, self).__init__()
         self.mae = nn.L1Loss()
         self.A = A
         self.B = B

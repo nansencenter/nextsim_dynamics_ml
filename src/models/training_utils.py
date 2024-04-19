@@ -8,7 +8,6 @@ def forward_pass(
     batch: torch.Tensor,
     device: torch.device,
     optimizer: torch.optim.Optimizer = None,
-    scheduler: torch.optim.lr_scheduler._LRScheduler = None,
     criterion: torch.nn.Module = None,
     gradient_clip:int =1
 ):
@@ -21,7 +20,7 @@ def forward_pass(
     if optimizer:
         loss.backward()
         if gradient_clip is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+            torch.nn.utils.clip_grad_value_(model.parameters(), gradient_clip)
         optimizer.step()
     return loss.item() if loss else None
 
@@ -30,7 +29,6 @@ def process_dataloader(
     dataloader: torch.utils.data.DataLoader,
     device: torch.device,
     optimizer: torch.optim.Optimizer = None,
-    scheduler: torch.optim.lr_scheduler._LRScheduler= None,
     criterion: torch.nn.Module = None,
     gradient_clip:int =1
 
@@ -38,7 +36,7 @@ def process_dataloader(
     total_loss = 0.0
     model.train() if optimizer else model.eval()
     for batch in dataloader:
-        loss = forward_pass(model, batch, device, optimizer, scheduler, criterion,gradient_clip=gradient_clip)
+        loss = forward_pass(model, batch, device, optimizer, criterion,gradient_clip=gradient_clip)
         total_loss += loss if loss else 0
     return total_loss / len(dataloader) if total_loss else None
 

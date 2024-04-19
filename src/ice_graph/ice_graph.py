@@ -70,7 +70,7 @@ class Nextsim_data():
 
         """
         
-        if time_index not in self.forcings.keys():
+        if time_index not in self.forcings.keys() or not np.isin(features, self.forcings[time_index].keys()).all():
             self.forcings[time_index] = {}
             field = self.element_data_list
             for feature in features:
@@ -376,7 +376,7 @@ class Ice_graph(Nextsim_data):
             include_vertex:bool = False,
             pred_velocity:bool = False,
             n_neighbours = 1,
-            future_forcing:bool = False
+            future_forcing:bool = True
     ):
         """
         Function to get the graph of a given area at a given time index.
@@ -419,11 +419,11 @@ class Ice_graph(Nextsim_data):
             time_index:int = 0,
             target_iter:int = 1,
             e_features: list[str] = ['Damage', 'Concentration', 'Thickness', 'M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
-            v_features: list[str] = ['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
+            v_features: list[str] = ['M_VT_x','M_VT_y','M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
             include_vertex:bool = False,
             velocity:bool = False,
             n_neighbours:int = 1,
-            future_forcing:bool = False
+            future_forcing:bool = True
     ):
         """
         Function to get the graph of elements around a given vertex at a given time index.
@@ -452,7 +452,7 @@ class Ice_graph(Nextsim_data):
         if element_data['Concentration'][adj_elements].min() == 0:
             return None
         #get target coordinates
-        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=  self.step  ,velocity=velocity).squeeze().to(torch.float32)
+        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter= self.step,velocity=velocity).squeeze().to(torch.float32)
 
         #Step
         if  self.step>1 and len(target.size())>0 and target.shape[0] == self.step:
@@ -473,7 +473,7 @@ class Ice_graph(Nextsim_data):
         vertex_idx = vertex_index
         x_center = vertex_data['x'][vertex_idx]
         y_center = vertex_data['y'][vertex_idx]
-        element_coords = torch.tensor(np.array([x_center,y_center])) #tokm
+        element_coords = torch.tensor(np.array([x_center,y_center]))
         y = [target,element_coords]
 
         #get node features
@@ -488,26 +488,38 @@ class Ice_graph(Nextsim_data):
         #get edge distances and node positions
         edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
 
+        #exclude xy
+        idx_no_xy = np.where(np.isin(features_indeces,['x','y'],invert=True))[0]
+        features_indeces = features_indeces[idx_no_xy]
+        node_features = node_features[:,idx_no_xy]
 
         metadata = {
             "time": time_index,
             "vertex_i": vertex_data['i'][v_neighbours]
         }
         #Now we can create our torch-geometric graph using the "Data" class
-        e_graph = IceData(x=node_features[:,:-2], edge_index=edge_index,edge_attr=edge_dist,pos=positions,y=y, metadata=metadata)
+        e_graph = IceData(x=node_features, edge_index=edge_index,edge_attr=edge_dist,pos=positions,y=y, metadata=metadata)
         v_graph = None
 
         if include_vertex:
             #get node features
-            node_features, features_indeces = self.__get_node_features(vertex_data,v_features,v_neighbours)
-            
+            if future_forcing:
+                node_features, features_indeces = self.__get_node_features(vertex_data,v_features,v_neighbours,time_index)
+            else:
+                node_features, features_indeces = self.__get_node_features(vertex_data,v_features,v_neighbours)
+                
             #get edge features
             edge_index = self.__get_vertex_edge_index(vertex_neighbours=v_neighbours,triangles=element_data['t'][e_neighbours])
-
             #get edge distances and node positions
             edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
+
+            #exclude xy
+            idx_no_xy = np.where(np.isin(features_indeces,['x','y'],invert=True))[0]
+            features_indeces = features_indeces[idx_no_xy]
+            node_features = node_features[:,idx_no_xy]
+           
             #Now we can create our torch-geometric graph using the "Data" class
-            v_graph = IceData(x=node_features[:,:-2], edge_index=edge_index, edge_attr=edge_dist,pos=positions,y=y,metadata=metadata)
+            v_graph = IceData(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions,y=y,metadata=metadata)
 
         return e_graph, v_graph
 
@@ -549,12 +561,17 @@ class Ice_graph(Nextsim_data):
             idx_x,idx_y = idx_list.index('x'),idx_list.index('y')
             forcing = self.get_forcings(time_index+self.step)
             for key,item in forcing.items():
-                if key in features:
+                if key in features and key not in ['M_VT_x','M_VT_y']:
+                    idx_list.append(f'{key}_f')
                     node_features.append(torch.tensor(item(node_features[idx_x],node_features[idx_y])))
+                    #nan for some nodes on the mesh boundaries, quick fix -> replace with mean
+                    if torch.isnan(node_features[-1]).any():
+                        node_features[-1] = torch.nan_to_num(node_features[-1],torch.nanmean(node_features[-1]))
+                        
+                        
 
-        
         node_features = torch.cat(node_features).t().to(torch.float32)
-        return node_features, idx_list
+        return node_features, np.array(idx_list)
     
     
 

@@ -1,0 +1,21 @@
+program: src/trainer.py
+method: bayes
+metric:
+  name: min mse val
+  goal: minimize
+parameters:
+  batch-size:
+    values: [8]
+  weight-decay:
+    distribution: uniform
+    min: 0
+    max: 0.02
+  loss-function:
+    values: ["flb", "mse"]
+  lr:
+    min: 0.0001
+    max: 0.1
+  optimizer:
+    values: ["adam", "sgd"]
+  model:
+    values: ["alejonet"]

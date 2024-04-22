@@ -6,6 +6,41 @@ from torch_geometric.loader import DataLoader
 
 
 
+def normalize(to_normalize,mean_vec,std_vec):
+    """
+    Compute the normalization of the input data
+    """
+    return (to_normalize-mean_vec)/std_vec
+
+def unnormalize(to_unnormalize,mean_vec,std_vec):
+    """
+    Compute the unnormalization of the input data
+    """
+    return to_unnormalize*std_vec+mean_vec
+
+
+def compute_stats_batch(graph_list:list):
+    """
+    Compute the mean and std of the features of the dataset
+
+    Arguments:
+        graph_list: list
+            list of graphs
+
+    Returns:
+        stats_list: list
+            list of mean and std of the features, edge attributes and targets
+        
+    """
+
+    item = next(iter(DataLoader(graph_list, batch_size=len(graph_list), shuffle=False)))
+    stats_list = item.x.mean(dim=0),item.x.std(dim=0),item.edge_attr.mean(dim=0),item.edge_attr.std(dim=0),item.y.mean(dim=0),item.y.std(dim=0)
+
+    return stats_list
+
+
+## bellow the code is not used in the current implementation
+
 def compute_normalization_batch(graph_list:list):
     """
     Compute the normalization transform for the dataset

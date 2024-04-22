@@ -205,6 +205,7 @@ def main(
         save_name: str = 'graph_list.pt',
         delta_t: int = 1800,
         start_time: int = 1,
+        multiprocess: bool = True
 ):
 
     # Create output directory if it does not exist
@@ -227,16 +228,22 @@ def main(
         vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y']
     )
 
+    time_end = 6#len(nextsim)
+
     graph_list = []
-    num_cores = mp.cpu_count()
-    print(f'Using {num_cores} cores')
-    pool = mp.Pool(processes=num_cores)
+    if multiprocess:
+        num_cores = mp.cpu_count()
+        print(f'Using {num_cores} cores')
+        pool = mp.Pool(processes=num_cores)
 
-    for time in trange(start_time, 3):
-        graph_list.append(pool.apply(generate_graph, args=(time, nextsim, delta_t)))
+        for time in trange(start_time, time_end):
+            graph_list.append(pool.apply(generate_graph, args=(time, nextsim, delta_t)))
 
-    pool.close()
-    pool.join()
+        pool.close()
+        pool.join()
+    else:
+        for time in trange(start_time, time_end):
+            graph_list.append(generate_graph(time, nextsim, delta_t))
 
     torch.save(graph_list, os.path.join(out_path, save_name))
 

@@ -72,9 +72,13 @@ class Nextsim_data():
         
         if time_index not in self.forcings.keys() or not np.isin(features, self.forcings[time_index].keys()).all():
             self.forcings[time_index] = {}
-            field = self.element_data_list
             for feature in features:
-                self.forcings[time_index][feature] = LinearNDInterpolator(list(zip(field[time_index]['x'], field[time_index]['y'])), field[time_index][feature])
+                if feature in self.vertex_data_list[time_index].keys():
+                    field = self.vertex_data_list[time_index]
+                else:
+                    field = self.element_data_list[time_index]
+
+                self.forcings[time_index][feature] = LinearNDInterpolator(list(zip(field['x'], field['y'])), field[feature])
         
         return self.forcings[time_index]
 

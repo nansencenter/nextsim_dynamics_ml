@@ -142,7 +142,7 @@ def main(
 
 
 
-def generate_graph(time, nextsim, delta_t):
+def generate_graph(time, nextsim, delta_t,out_path,start_time):
     forcing_interp = nextsim.get_forcings(time-1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y','Concentration','Thickness'])
     vertex_data = nextsim.get_item(time, elements=False)
     element_data = nextsim.get_item(time, elements=True)
@@ -196,7 +196,14 @@ def generate_graph(time, nextsim, delta_t):
     cells = torch.tensor(element_data['t']).type(torch.float)
     mesh_pos = torch.stack((torch.tensor(vertex_data['x']), torch.tensor(vertex_data['y'])), dim=1).type(torch.float)
 
-    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos)
+    data =  Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos)
+    file_name = f"graph_{time+start_time}.pt"
+    #save in path
+    torch.save(data, os.path.join(out_path, file_name))
+
+    del data
+
+    return file_name
 
 
 def main(
@@ -204,22 +211,30 @@ def main(
         out_path: str = '../data_graphs',
         save_name: str = 'graph_list.pt',
         delta_t: int = 1800,
-        start_time: int = 1,
-        multiprocess: bool = True
+        start_time: int = 229,
+        end_time: int = 280,
+        multiprocess: bool = False
 ):
 
     # Create output directory if it does not exist
     os.makedirs(out_path, exist_ok=True)
 
     # Load files
-    files = sorted(os.listdir(data_path))
+    try:
+        files = sorted(os.listdir(data_path))[start_time:end_time]
+    except:
+        print(f"Can't open directory: {data_path} or time range is invalid.")
+        return
+
     print(f'{len(files)} existing files')
     file_graphs = []
     for file in files:
-        try:
-            file_graphs.append(dict(np.load(f"{data_path}/{file}")))
-        except:
-            print(f"Can't open file: {file}")
+        with open(f"{data_path}/{file}", 'rb') as f:
+            try:
+                file_graphs.append(dict(np.load(f)))
+            except:
+                print(f"Can't open file: {file}")
+
 
     print(f'Loaded {len(file_graphs)} files')
 
@@ -228,7 +243,6 @@ def main(
         vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y']
     )
 
-    time_end = 6#len(nextsim)
 
     graph_list = []
     if multiprocess:
@@ -236,14 +250,14 @@ def main(
         print(f'Using {num_cores} cores')
         pool = mp.Pool(processes=num_cores)
 
-        for time in trange(start_time, time_end):
-            graph_list.append(pool.apply(generate_graph, args=(time, nextsim, delta_t)))
+        for time in trange(1, len(file_graphs)):
+            graph_list.append(pool.apply(generate_graph, args=(time, nextsim, delta_t,out_path,start_time)))
 
         pool.close()
         pool.join()
     else:
-        for time in trange(start_time, time_end):
-            graph_list.append(generate_graph(time, nextsim, delta_t))
+        for time in trange(1, len(file_graphs)):
+            graph_list.append(generate_graph(time, nextsim, delta_t,out_path,start_time))
 
     torch.save(graph_list, os.path.join(out_path, save_name))
 

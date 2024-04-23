@@ -11,6 +11,7 @@ from torch_geometric.loader import DataLoader
 from models.MGN import MeshGraphNet
 from utils.graph_utils import compute_stats_batch
 from utils.graph_utils import unnormalize
+import wandb
 
 def train(dataset, device, stats_list, args):
     '''
@@ -196,17 +197,17 @@ class objectview(object):
 def main(
     dataset_dir='../data_graphs/graph_list.pt',
     model_type='meshgraphnet',
-    num_layers=6,
-    batch_size=16,
-    hidden_dim=4,
-    epochs=100,
+    num_layers=10,
+    batch_size=1,
+    hidden_dim=10,
+    epochs=20,
     opt='adam',
     opt_scheduler='cos',
     opt_restart=0,
     weight_decay=5e-4,
     lr=0.001,
-    train_size=5,
-    test_size=2,
+    train_size=10,
+    test_size=5,
     device='cpu',
     shuffle=True,
     save_velo_val=False,
@@ -238,38 +239,56 @@ def main(
             },
         ]:
             args = objectview(args)
-
+    #init wandb
+    wandb.init(config=args, project='MGN_sweep', entity='franamor98')
     #To ensure reproducibility the best we can, here we control the sources of
     #randomness by seeding the various random number generators used in this Colab
     #For more information, see: https://pytorch.org/docs/stable/notes/randomness.html
-    torch.manual_seed(5)  #Torch
-    random.seed(5)        #Python
-    np.random.seed(5)     #NumPy
+    # Seed random number generators
+    torch.manual_seed(5)
+    random.seed(5)
+    np.random.seed(5)
 
-    #load the dataset
-    dataset = torch.load(dataset_dir)
+    # Load dataset
     try:
-        dataset = dataset[:args.train_size+args.test_size]
+        graph_files = sorted(os.listdir('../data_graphs'))[:train_size + test_size]
     except:
         print('Dataset is smaller than train_size + test_size')
 
-    if(args.shuffle):
+    dataset = []
+    for file in graph_files:
+        with open(os.path.join('../data_graphs',file),'rb') as f:
+            dataset.append(torch.load(f))
+
+    if shuffle:
         random.shuffle(dataset)
 
-    #create best_models directory if it does not exist
-    if not os.path.isdir( args.checkpoint_dir ):
-        os.mkdir(args.checkpoint_dir)
+    # Create checkpoint directory if it does not exist
+    if not os.path.isdir(checkpoint_dir):
+        os.mkdir(checkpoint_dir)
     
+    # Compute stats
     stats_list = compute_stats_batch(dataset)
 
-    test_losses, losses, velo_val_losses, best_model, best_test_loss, test_loader,model_name = train(dataset, device, stats_list, args)
+    # Train
+    test_losses, losses, velo_val_losses, best_model, best_test_loss, test_loader, model_name = train(dataset, device, stats_list,args)
+
+    # Log metrics to WandB
+    wandb.log({
+        'min_test_loss': min(test_losses),
+        'min_loss': min(losses),
+        'best_model': model_name,
+        'min_velo_val_loss': min(velo_val_losses) if save_velo_val else None
+    })
 
     print("Min test set loss: {0}".format(min(test_losses)))
     print("Minimum loss: {0}".format(min(losses)))
     print("Best model: {0}".format(model_name))
-    if (args.save_velo_val):
+    if save_velo_val:
         print("Minimum velocity validation loss: {0}".format(min(velo_val_losses)))
-    
+
 
 if __name__ == "__main__":
     main()
+
+

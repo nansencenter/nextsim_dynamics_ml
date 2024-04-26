@@ -35,7 +35,7 @@ def triangles_to_edges(faces):
 
 
 
-def generate_full_graph(time, nextsim, delta_t,out_path,start_time):
+def generate_full_graph(time, nextsim,out_path,start_time):
     forcing_interp = nextsim.get_forcings(time-1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y','Concentration','Thickness'])
     vertex_data = nextsim.get_item(time, elements=False)
     element_data = nextsim.get_item(time, elements=True)
@@ -76,7 +76,7 @@ def generate_full_graph(time, nextsim, delta_t,out_path,start_time):
     u_ij = u_i - u_j
     u_ij_norm = torch.norm(u_ij, p=2, dim=1, keepdim=True)
     edge_attr = torch.cat((u_ij, u_ij_norm), dim=-1).type(torch.float)
-
+    """
     v_t1 = torch.stack(
         (torch.tensor(vertex_data['M_VT_x']),
          torch.tensor(vertex_data['M_VT_y'])),
@@ -84,6 +84,12 @@ def generate_full_graph(time, nextsim, delta_t,out_path,start_time):
     )
     v_t0 = torch.stack((torch.tensor(ice_u), torch.tensor(ice_v)), dim=1)
     y = ((v_t1 - v_t0) / delta_t).type(torch.float)
+    """
+
+
+    y = nextsim.compute_acceleration(time)
+  
+
 
     # Data needed for visualization code
     cells = torch.tensor(element_data['t']).type(torch.float)
@@ -99,14 +105,23 @@ def generate_full_graph(time, nextsim, delta_t,out_path,start_time):
     return file_name
 
 
-def generate_centered_graph(time, nextsim, vertex_i,delta_t,out_path,start_time):
+def generate_centered_graph(time, nextsim, vertex_i,out_path,start_time,radius=100000):
 
-
-    forcing_interp = nextsim.get_forcings(time-1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y','Concentration','Thickness'])
     vertex_data = nextsim.get_item(time,elements=False)
     element_data = nextsim.get_item(time,elements=True)
-    vertex_index = np.where(np.isin(vertex_data['i'],vertex_i))[0]
+    try:
+        central_vertex_index = np.where(vertex_data['i'] == vertex_i)[0][0]
+    except:
+        print(f"Vertex {vertex_i} not found in time {time}")
+
+    center_x = vertex_data['x'][central_vertex_index]
+    center_y = vertex_data['y'][central_vertex_index]
+
+    #get samples
+    _,vertex_index = nextsim.get_samples_area((center_x,center_y),radius,time,elements=False)
     elements_index = np.where(np.isin(element_data['t'],vertex_index))[0]
+
+    forcing_interp = nextsim.get_forcings(time-1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y','Concentration','Thickness'])
 
     wind_u = torch.tensor(forcing_interp['M_wind_x'](vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]))
     wind_v = torch.tensor(forcing_interp['M_wind_y'](vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]))
@@ -132,6 +147,14 @@ def generate_centered_graph(time, nextsim, vertex_i,delta_t,out_path,start_time)
     
     edge_index = triangles_to_edges(element_data['t'][elements_index]).type(torch.long)
 
+    edge_index = [
+        #np.where to get the index of the pair in neighbours (same index as node_features)
+        [ np.where(vertex_index==pair[0])[0], np.where(vertex_index==pair[1])[0] ] 
+        for pair in np.array(edge_index).transpose() 
+        if np.isin(pair,vertex_index).all(axis=-1)
+    ]
+    edge_index = torch.as_tensor(np.array(edge_index)).squeeze().t()
+
     u_i = torch.stack(
         (torch.tensor(vertex_data['x'])[edge_index[0]],
         torch.tensor(vertex_data['y'])[edge_index[0]]),
@@ -146,14 +169,18 @@ def generate_centered_graph(time, nextsim, vertex_i,delta_t,out_path,start_time)
     u_ij_norm = torch.norm(u_ij,p=2,dim=1,keepdim=True)
     edge_attr = torch.cat((u_ij,u_ij_norm),dim=-1).type(torch.float)
 
+    """
     v_t1 = torch.stack(
         (torch.tensor(vertex_data['M_VT_x'][vertex_index]),
         torch.tensor(vertex_data['M_VT_y'][vertex_index])),
         dim=1
     )
+
     v_t0=torch.stack((torch.tensor(ice_u),torch.tensor(ice_v)),dim=1)
     y = ((v_t1 - v_t0) / delta_t).type(torch.float)
-
+    """
+   
+    y = nextsim.compute_acceleration(time)[vertex_index]
     
     #Data needed for visualization code
     cells = torch.tensor(element_data['t'][vertex_index]).type(torch.float)
@@ -179,9 +206,10 @@ def main(
         save_name: str = 'graph_list.pt',
         delta_t: int = 1800,
         start_time: int = 48,
-        end_time: int = 100,
-        center: bool = True,
-        neigh_layers: int = 20
+        end_time: int = 55,
+        crop: bool = True,
+        vertex_i: int = 80603, #precompute on notebook
+        radius: int = 100000
 ):
 
     # Create output directory if it does not exist
@@ -205,35 +233,22 @@ def main(
 
 
     print(f'Loaded {len(file_graphs)} files')
+    print(f'cropped graph: {crop}')
 
     nextsim = Ice_graph(
         file_graphs,
-        vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y']
+        vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y'],
+        d_time=delta_t
     )
 
 
     graph_list = []
-    if center:
-
-        files = sorted(os.listdir(data_path))[48]
-        with open(f"{data_path}/{files}", 'rb') as f:
-            try:
-                file_graph =dict(np.load(f))
-            except:
-                print(f"Can't open file: {file}")
-        nextsim_load_index = Ice_graph(
-            [file_graph],
-            vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y']
-        )
-
-        _,_,samples  = nextsim_load_index.compute_vertex_neighbourhood(vertex_index=8544,time_index=0,return_vertex=True,n_neighbours=neigh_layers)
-        selected_graph = nextsim_load_index.get_item(0,elements=False) 
-        vertex_i = selected_graph['i'][samples]
-        for time in trange(1, len(file_graphs)):
-            graph_list.append(generate_centered_graph(time, nextsim, vertex_i,delta_t,out_path,start_time))
+    if crop:
+        for time in trange(1, len(file_graphs)-1):
+            graph_list.append(generate_centered_graph(time, nextsim, vertex_i,out_path,start_time,radius))
     else:
-        for time in trange(1, len(file_graphs)):
-            graph_list.append(generate_full_graph(time, nextsim, delta_t,out_path,start_time))
+        for time in trange(1, len(file_graphs)-1):
+            graph_list.append(generate_full_graph(time, nextsim,out_path,start_time))
 
     torch.save(graph_list, os.path.join(out_path, save_name))
 

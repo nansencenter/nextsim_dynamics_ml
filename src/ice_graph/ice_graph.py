@@ -155,6 +155,70 @@ class Nextsim_data():
         return vertex_data_list
 
 
+    def compute_acceleration(self,time_index:int):
+        """
+        Function to compute the acceleration of a given vertex.
+
+        Arguments:
+            time_index: int
+                index of the time to sample from
+            vertex_i: int
+                index of the vertex to sample from
+        returns:    
+            acceleration: torch.tensor
+                tensor of acceleration
+        """
+        d0 = self.vertex_data_list[time_index-1]
+        d1 = self.vertex_data_list[time_index]
+        d2 = self.vertex_data_list[time_index+1]
+
+       #compute vel between d0 and d1
+        _,comm01, comm10 = np.intersect1d(d0['i'], d1['i'], assume_unique=True, return_indices=True)
+        # get common X, Y coordinates
+        x0 = d0['x'][comm01]
+        y0 = d0['y'][comm01]
+        x1 = d1['x'][comm10]
+        y1 = d1['y'][comm10]
+
+        # compute drift [m/s] for two files separated by 1 hour
+        u0 = (x1 - x0) / (self.d_time)
+        v0 = (y1 - y0) / (self.d_time)
+
+
+        #compute vel between d1 and d2
+        _,comm12, comm21 = np.intersect1d(d1['i'], d2['i'], assume_unique=True, return_indices=True)
+        # get common X, Y coordinates
+        x1 = d1['x'][comm12]
+        y1 = d1['y'][comm12]
+        x2 = d2['x'][comm21]
+        y2 = d2['y'][comm21]
+
+        # compute drift [m/s] for two files separated by 1 hour
+        u1 = (x2 - x1) / (self.d_time)
+        v1 = (y2 - y1) / (self.d_time)
+
+        if len(x0) != len(x1):
+        
+            u0_interp = LinearNDInterpolator(list(zip(x0, y0)), u0)
+            v0_interp = LinearNDInterpolator(list(zip(x0, y0)), v0)
+
+            u1_interp = LinearNDInterpolator(list(zip(x1, y1)), u1)
+            v1_interp = LinearNDInterpolator(list(zip(x1, y1)), v1)
+
+            v0 = v0_interp( d1['x'],  d1['y'])
+            u0 = u0_interp( d1['x'],  d1['y'])
+
+            v1 = v1_interp( d1['x'],  d1['y'])
+            u1 = u1_interp( d1['x'],  d1['y'])
+
+
+        #compute acceleration
+        a = (u1 - u0) / (self.d_time)
+        b = (v1 - v0) / (self.d_time)
+
+
+        return torch.stack([torch.tensor(a),torch.tensor(b)],dim=1)
+
     def get_closer_neighbours(
             self,
             dataindex:int,
@@ -236,7 +300,7 @@ class Nextsim_data():
             central_coords: tuple[float,float],
             radius: float,
             time_index:int = 0,
-            n_samples:int = 1000,
+            n_samples:int = None,
             elements:bool = True,
     ):
         """
@@ -266,13 +330,14 @@ class Nextsim_data():
         x_center,y_center = central_coords
         #get the data that are inside the circle
         samples = np.where(np.sqrt((data['x']-x_center)**2 + (data['y']-y_center)**2)<radius)[0]
-        n_samples = min(n_samples,len(samples))
-        samples = np.random.choice(samples,n_samples)
+        if n_samples is not None:
+            n_samples = min(n_samples,len(samples))
+            samples = np.random.choice(samples,n_samples)
 
         samples_i = data['i'][samples]
 
         
-        return samples_i
+        return samples_i,samples
         
 
     def get_vertex_trajectories(
@@ -365,8 +430,8 @@ class Ice_graph(Nextsim_data):
     """
     Class to create torch geometric graphs data from nextsim outputs.
     """
-    def __init__(self,file_graphs,vertex_element_features: list[str] = ['x','y']) -> None:
-        super().__init__(file_graphs,vertex_element_features)
+    def __init__(self,file_graphs,vertex_element_features: list[str] = ['x','y'],d_time:int = 3600, step = 1) -> None:
+        super().__init__(file_graphs,vertex_element_features,d_time,step)
     
 
     def get_samples_graph(
@@ -513,7 +578,7 @@ class Ice_graph(Nextsim_data):
                 node_features, features_indeces = self.__get_node_features(vertex_data,v_features,v_neighbours)
                 
             #get edge features
-            edge_index = self.__get_vertex_edge_index(vertex_neighbours=v_neighbours,triangles=element_data['t'][e_neighbours])
+            edge_index = self.get_vertex_edge_index(vertex_neighbours=v_neighbours,triangles=element_data['t'][e_neighbours])
             #get edge distances and node positions
             edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
 
@@ -630,7 +695,7 @@ class Ice_graph(Nextsim_data):
 
         return edge_index
     
-    def __get_vertex_edge_index(
+    def get_vertex_edge_index(
             self,
             vertex_neighbours: np.array,
             triangles: np.array

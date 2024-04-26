@@ -250,8 +250,11 @@ def main(
     np.random.seed(5)
 
     # Load dataset
+    graph_files = [i for i in os.listdir('../data_graphs') if "list" not in i and "pt" in i]
+    graph_files = sorted(graph_files,key=lambda x:int(x.split("_")[-1].split(".")[0]))
     try:
-        graph_files = sorted(os.listdir('../data_graphs'))[:train_size + test_size]
+        graph_files = graph_files[:train_size + test_size]
+        
     except:
         print('Dataset is smaller than train_size + test_size')
 

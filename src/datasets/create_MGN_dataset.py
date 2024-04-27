@@ -35,7 +35,17 @@ def triangles_to_edges(faces):
 
 
 
-def generate_full_graph(time, nextsim,out_path,start_time):
+def generate_full_graph(time, file_graphs,out_path,start_time,delta_t):
+
+    #generate a nextsim object with 3 time steps
+    nextsim = Ice_graph(
+        file_graphs[time-1:time+2],
+        vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y'],
+        d_time=delta_t
+    )
+    #set time to one to get the current time in our 3 steps window
+    time = 1
+
     forcing_interp = nextsim.get_forcings(time-1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y','Concentration','Thickness'])
     vertex_data = nextsim.get_item(time, elements=False)
     element_data = nextsim.get_item(time, elements=True)
@@ -101,12 +111,23 @@ def generate_full_graph(time, nextsim,out_path,start_time):
     torch.save(data, os.path.join(out_path, file_name))
 
     del data
+    del element_data
+    del vertex_data
+    del nextsim
 
     return file_name
 
 
-def generate_centered_graph(time, nextsim, vertex_i,out_path,start_time,radius=100000):
+def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,radius=100000):
 
+    #generate a nextsim object with 3 time steps
+    nextsim = Ice_graph(
+        file_graphs[time-1:time+2],
+        vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y'],
+        d_time=delta_t
+    )
+    #set time to one to get the current time in our 3 steps window
+    time = 1
     vertex_data = nextsim.get_item(time,elements=False)
     element_data = nextsim.get_item(time,elements=True)
     try:
@@ -176,7 +197,7 @@ def generate_centered_graph(time, nextsim, vertex_i,out_path,start_time,radius=1
         dim=1
     )
 
-    v_t0=torch.stack((torch.tensor(ice_u),torch.tensor(ice_v)),dim=1)
+    v_t0=torch.stack((torch.tensor(ice_u),torch.tensor(inextsimce_v)),dim=1)
     y = ((v_t1 - v_t0) / delta_t).type(torch.float)
     """
    
@@ -195,6 +216,7 @@ def generate_centered_graph(time, nextsim, vertex_i,out_path,start_time,radius=1
     del data
     del element_data
     del vertex_data
+    del nextsim
 
     return file_name
 
@@ -205,11 +227,11 @@ def main(
         out_path: str = '../data_graphs/centered_graphs',
         save_name: str = 'graph_list.pt',
         delta_t: int = 1800,
-        start_time: int = 48,
-        end_time: int = 55,
+        start_time: int = 25,
+        end_time: int = 120,
         crop: bool = True,
-        vertex_i: int = 80603, #precompute on notebook
-        radius: int = 100000
+        vertex_i: int = 26039, #precompute on notebook
+        radius: int = 400000
 ):
 
     # Create output directory if it does not exist
@@ -235,20 +257,16 @@ def main(
     print(f'Loaded {len(file_graphs)} files')
     print(f'cropped graph: {crop}')
 
-    nextsim = Ice_graph(
-        file_graphs,
-        vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y'],
-        d_time=delta_t
-    )
+  
 
 
     graph_list = []
     if crop:
         for time in trange(1, len(file_graphs)-1):
-            graph_list.append(generate_centered_graph(time, nextsim, vertex_i,out_path,start_time,radius))
+            graph_list.append(generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,radius))
     else:
         for time in trange(1, len(file_graphs)-1):
-            graph_list.append(generate_full_graph(time, nextsim,out_path,start_time))
+            graph_list.append(generate_full_graph(time, file_graphs,out_path,start_time,delta_t))
 
     torch.save(graph_list, os.path.join(out_path, save_name))
 

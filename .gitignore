@@ -9,7 +9,10 @@ __pycache__/
 #data and figures
 data/
 figures/
-data_graphs
+data_graphs/
+animation/
+best_models/
+src/wandb/
 
 # Distribution / packaging
 .Python

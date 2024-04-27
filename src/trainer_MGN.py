@@ -70,19 +70,14 @@ def train(dataset, device, stats_list, args):
 
         #Every tenth epoch, calculate acceleration test loss and velocity validation loss
         if epoch % 10 == 0:
-            if (args.save_velo_val):
-                # save velocity evaluation
-                test_loss, velo_val_rmse = test(test_loader,device,model,mean_vec_x,std_vec_x,mean_vec_edge,
-                                 std_vec_edge,mean_vec_y,std_vec_y, args.save_velo_val)
-                velo_val_losses.append(velo_val_rmse.item())
-            else:
-                test_loss, _ = test(test_loader,device,model,mean_vec_x,std_vec_x,mean_vec_edge,
-                                 std_vec_edge,mean_vec_y,std_vec_y, args.save_velo_val)
+
+            test_loss = test(test_loader,device,model,mean_vec_x,std_vec_x,mean_vec_edge,
+                                std_vec_edge,mean_vec_y,std_vec_y)
 
             test_losses.append(test_loss.item())
 
             # saving model
-            if not os.path.isdir( args.checkpoint_dir ):
+            if not os.path.isdir(args.checkpoint_dir ):
                 os.mkdir(args.checkpoint_dir)
 
             PATH = os.path.join(args.checkpoint_dir, model_name+'.csv')
@@ -96,27 +91,13 @@ def train(dataset, device, stats_list, args):
         else:
             #If not the tenth epoch, append the previously calculated loss to the
             #list in order to be able to plot it on the same plot as the training losses
-            if (args.save_velo_val):
-              test_losses.append(test_losses[-1])
-              velo_val_losses.append(velo_val_losses[-1])
+            test_losses.append(test_losses[-1])
 
-        if (args.save_velo_val):
-            #concat dict to existinf dataframe
-            df = pd.concat([df, pd.DataFrame({'epoch': [epoch], 'train_loss': losses[-1:], 'test_loss': test_losses[-1:],'velo_val_loss': velo_val_losses[-1:]})])
-            """df.append({'epoch': epoch,'train_loss': losses[-1],
-                            'test_loss':test_losses[-1],
-                           'velo_val_loss': velo_val_losses[-1]}, ignore_index=True)
-            """
-        else:
-            df = pd.concat([df, pd.DataFrame({'epoch': [epoch], 'train_loss': losses[-1:], 'test_loss': test_losses[-1:]})] )
-            #df = df.append({'epoch': epoch, 'train_loss': losses[-1], 'test_loss': test_losses[-1]}, ignore_index=True)
+        df = pd.concat([df, pd.DataFrame({'epoch': [epoch], 'train_loss': losses[-1:], 'test_loss': test_losses[-1:]})] )
+        
         if(epoch%100==0):
-            if (args.save_velo_val):
-                print("train loss", str(round(total_loss, 2)),
-                      "test loss", str(round(test_loss.item(), 2)),
-                      "velo loss", str(round(velo_val_rmse.item(), 5)))
-            else:
-                print("train loss", str(round(total_loss,2)), "test loss", str(round(test_loss.item(),2)))
+            
+            print("train loss", str(round(total_loss,2)), "test loss", str(round(test_loss.item(),2)))
 
 
             if(args.save_best_model):
@@ -127,15 +108,13 @@ def train(dataset, device, stats_list, args):
     return test_losses, losses, velo_val_losses, best_model, best_test_loss, test_loader,model_name
 
 def test(loader,device,test_model,
-         mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y, is_validation,
-          delta_t=0.01, save_model_preds=False, model_type=None):
+         mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y):
 
     '''
-    Calculates test set losses and validation set errors.
+    Calculates test set losses .
     '''
 
     loss=0
-    velo_rmse = 0
     num_loops=0
 
     for data in loader:
@@ -145,28 +124,9 @@ def test(loader,device,test_model,
             #calculate the loss for the model given the test set
             pred = test_model(data,mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge)
             loss += test_model.loss(pred, data,mean_vec_y,std_vec_y)
-
-            #calculate validation error if asked to
-            if (False):##
-
-                #Like for the MeshGraphNets model, calculate the mask over which we calculate
-                #flow loss and add this calculated RMSE value to our val error
-                normal = torch.tensor(0)
-                outflow = torch.tensor(5)
-                #loss_mask = torch.logical_or((torch.argmax(data.x[:, 2:], dim=1) == torch.tensor(0)),
-                                             #(torch.argmax(data.x[:, 2:], dim=1) == torch.tensor(5)))
-
-                eval_velo = data.x[:, 0:2] + unnormalize( pred[:], mean_vec_y, std_vec_y ) * delta_t
-                gs_velo = data.x[:, 0:2] + data.y[:] * delta_t
-
-                error = torch.sum((eval_velo - gs_velo) ** 2, axis=1)
-                #velo_rmse += torch.sqrt(torch.mean(error[loss_mask]))
-                velo_rmse += torch.sqrt(torch.mean(error))
-
-
         num_loops+=1
         # if velocity is evaluated, return velo_rmse as 0
-    return loss/num_loops, velo_rmse/num_loops
+    return loss/num_loops
 
 def build_optimizer(args, params):
     weight_decay = args.weight_decay
@@ -195,7 +155,7 @@ class objectview(object):
 
 
 def main(
-    dataset_dir='../data_graphs/graph_list.pt',
+    dataset_dir='../data_graphs/centered_graphs',
     model_type='meshgraphnet',
     num_layers=10,
     batch_size=1,
@@ -206,8 +166,8 @@ def main(
     opt_restart=0,
     weight_decay=5e-4,
     lr=0.001,
-    train_size=10,
-    test_size=5,
+    train_size=40,
+    test_size=10,
     device='cpu',
     shuffle=True,
     save_velo_val=False,
@@ -240,7 +200,7 @@ def main(
         ]:
             args = objectview(args)
     #init wandb
-    wandb.init(config=args, project='MGN_sweep', entity='franamor98')
+    #wandb.init(config=args, project='MGN_sweep', entity='franamor98')
     #To ensure reproducibility the best we can, here we control the sources of
     #randomness by seeding the various random number generators used in this Colab
     #For more information, see: https://pytorch.org/docs/stable/notes/randomness.html
@@ -250,7 +210,7 @@ def main(
     np.random.seed(5)
 
     # Load dataset
-    graph_files = [i for i in os.listdir('../data_graphs') if "list" not in i and "pt" in i]
+    graph_files = [i for i in os.listdir(dataset_dir) if "list" not in i and "pt" in i]
     graph_files = sorted(graph_files,key=lambda x:int(x.split("_")[-1].split(".")[0]))
     try:
         graph_files = graph_files[:train_size + test_size]
@@ -260,7 +220,7 @@ def main(
 
     dataset = []
     for file in graph_files:
-        with open(os.path.join('../data_graphs',file),'rb') as f:
+        with open(os.path.join(dataset_dir,file),'rb') as f:
             dataset.append(torch.load(f))
 
     if shuffle:
@@ -277,12 +237,14 @@ def main(
     test_losses, losses, velo_val_losses, best_model, best_test_loss, test_loader, model_name = train(dataset, device, stats_list,args)
 
     # Log metrics to WandB
+    """
+    
     wandb.log({
         'min_test_loss': min(test_losses),
         'min_loss': min(losses),
         'best_model': model_name,
-        'min_velo_val_loss': min(velo_val_losses) if save_velo_val else None
     })
+    """
 
     print("Min test set loss: {0}".format(min(test_losses)))
     print("Minimum loss: {0}".format(min(losses)))

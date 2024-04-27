@@ -12,6 +12,7 @@ from models.MGN import MeshGraphNet
 from utils.graph_utils import compute_stats_batch
 from utils.graph_utils import unnormalize
 import wandb
+import yaml
 
 def train(dataset, device, stats_list, args):
     '''
@@ -68,8 +69,9 @@ def train(dataset, device, stats_list, args):
         total_loss /= num_loops
         losses.append(total_loss)
 
+
         #Every tenth epoch, calculate acceleration test loss and velocity validation loss
-        if epoch % 10 == 0:
+        if epoch % 2 == 0:
             if (args.save_velo_val):
                 # save velocity evaluation
                 test_loss, velo_val_rmse = test(test_loader,device,model,mean_vec_x,std_vec_x,mean_vec_edge,
@@ -80,6 +82,13 @@ def train(dataset, device, stats_list, args):
                                  std_vec_edge,mean_vec_y,std_vec_y, args.save_velo_val)
 
             test_losses.append(test_loss.item())
+            scheduler.step(test_loss.item()) if scheduler else None
+
+
+            wandb.log({
+                'test_loss': test_loss.item(),
+                'train_loss': total_loss
+            })
 
             # saving model
             if not os.path.isdir( args.checkpoint_dir ):
@@ -110,14 +119,8 @@ def train(dataset, device, stats_list, args):
         else:
             df = pd.concat([df, pd.DataFrame({'epoch': [epoch], 'train_loss': losses[-1:], 'test_loss': test_losses[-1:]})] )
             #df = df.append({'epoch': epoch, 'train_loss': losses[-1], 'test_loss': test_losses[-1]}, ignore_index=True)
-        if(epoch%100==0):
-            if (args.save_velo_val):
-                print("train loss", str(round(total_loss, 2)),
-                      "test loss", str(round(test_loss.item(), 2)),
-                      "velo loss", str(round(velo_val_rmse.item(), 5)))
-            else:
-                print("train loss", str(round(total_loss,2)), "test loss", str(round(test_loss.item(),2)))
-
+        if(epoch%2==0):
+            print("train loss", str(round(total_loss,2)), "test loss", str(round(test_loss.item(),2)))
 
             if(args.save_best_model):
 
@@ -173,6 +176,8 @@ def build_optimizer(args, params):
     filter_fn = filter(lambda p : p.requires_grad, params)
     if args.opt == 'adam':
         optimizer = optim.Adam(filter_fn, lr=args.lr, weight_decay=weight_decay)
+    elif args.opt == 'adamW':
+        optimizer = optim.AdamW(filter_fn, lr=args.lr, weight_decay=weight_decay)
     elif args.opt == 'sgd':
         optimizer = optim.SGD(filter_fn, lr=args.lr, momentum=0.95, weight_decay=weight_decay)
     elif args.opt == 'rmsprop':
@@ -182,9 +187,11 @@ def build_optimizer(args, params):
     if args.opt_scheduler == 'none':
         return None, optimizer
     elif args.opt_scheduler == 'step':
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.opt_decay_step, gamma=args.opt_decay_rate)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.opt_decay_step)
     elif args.opt_scheduler == 'cos':
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.opt_restart)
+    elif args.opt_scheduler == 'plateau':
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
     return scheduler, optimizer
 
 
@@ -198,23 +205,36 @@ def main(
     dataset_dir='../data_graphs/graph_list.pt',
     model_type='meshgraphnet',
     num_layers=10,
-    batch_size=1,
+    batch_size=8,
     hidden_dim=10,
-    epochs=20,
-    opt='adam',
-    opt_scheduler='cos',
+    epochs=2000,
+    opt='adamW',
+    opt_scheduler='plateau',
     opt_restart=0,
     weight_decay=5e-4,
-    lr=0.001,
-    train_size=10,
-    test_size=5,
-    device='cpu',
+    lr=0.1,
+    train_size=270,
+    test_size=60,
+    device='cuda',
     shuffle=True,
     save_velo_val=False,
     save_best_model=True,
     checkpoint_dir='../best_models/',
-    postprocess_dir='./2d_loss_plots/'
+    postprocess_dir='./2d_loss_plots/',
+    wandb_sweep: bool = True
 ):
+
+    #wandb init
+    wandb.login()
+
+    if wandb_sweep:
+        with open('./sweep_config.yml', 'r') as file:
+            wd_config = yaml.safe_load(file)
+        
+        run = wandb.init(config=wd_config, entity='franamor98')
+
+        lr = wandb.config.lr
+        weight_decay = wandb.config.weight_decay
 
     for args in [
             {
@@ -236,11 +256,12 @@ def main(
                 'save_best_model': save_best_model,
                 'checkpoint_dir': checkpoint_dir,
                 'postprocess_dir': postprocess_dir,
+                "opt_decay_step": 10
             },
         ]:
             args = objectview(args)
     #init wandb
-    wandb.init(config=args, project='MGN_sweep', entity='franamor98')
+    
     #To ensure reproducibility the best we can, here we control the sources of
     #randomness by seeding the various random number generators used in this Colab
     #For more information, see: https://pytorch.org/docs/stable/notes/randomness.html
@@ -250,6 +271,7 @@ def main(
     np.random.seed(5)
 
     # Load dataset
+    print(args.lr,args.weight_decay)
     try:
         graph_files = sorted(os.listdir('../data_graphs'))[:train_size + test_size]
     except:
@@ -259,9 +281,19 @@ def main(
     for file in graph_files:
         with open(os.path.join('../data_graphs',file),'rb') as f:
             dataset.append(torch.load(f))
-
+    
+    """
+    dataset = torch.load("../data_graphs/graph_list.pt")
+    print(len(dataset))
+    try:
+        dataset = dataset[:args.train_size+args.test_size]
+    except:
+        print('Dataset is smaller than train_size + test_size')
+    """
     if shuffle:
         random.shuffle(dataset)
+    
+    print(len(dataset))
 
     # Create checkpoint directory if it does not exist
     if not os.path.isdir(checkpoint_dir):
@@ -278,7 +310,6 @@ def main(
         'min_test_loss': min(test_losses),
         'min_loss': min(losses),
         'best_model': model_name,
-        'min_velo_val_loss': min(velo_val_losses) if save_velo_val else None
     })
 
     print("Min test set loss: {0}".format(min(test_losses)))
@@ -289,6 +320,7 @@ def main(
 
 
 if __name__ == "__main__":
+
     main()
 
 

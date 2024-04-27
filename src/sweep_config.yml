@@ -1,4 +1,4 @@
-name: "Learning Rate Sweep"
+name: "Learning Rate Sweep 3000e"
 program: trainer_MGN.py
 method: bayes
 metric:
@@ -6,6 +6,9 @@ metric:
   goal: minimize
 parameters:
   lr:
-    min: 0.0001
-    max: 0.1
+    min: 0.00001
+    max: 0.001
+  weight_decay:
+    min: 0.1
+    max: 0.3
  

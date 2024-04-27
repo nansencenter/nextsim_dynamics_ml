@@ -10,7 +10,8 @@ __pycache__/
 data/
 figures/
 data_graphs
-
+best_models/
+wandb/
 # Distribution / packaging
 .Python
 build/

@@ -6,15 +6,17 @@ import pandas as pd
 from tqdm import trange
 import torch
 import torch.optim as optim
+
 from torch_geometric.loader import DataLoader
 
 from models.MGN import MeshGraphNet
+from models.GUnet import GUNet
 from utils.graph_utils import compute_stats_batch
-from utils.graph_utils import unnormalize
+from utils.graph_utils import normalize_data
 import wandb
 import yaml
 
-def train(dataset, device, stats_list, args):
+def train(dataset, model, device, stats_list, args):
     '''
     Performs a training loop on the dataset for MeshGraphNets. Also calls
     test and validation functions.
@@ -25,43 +27,39 @@ def train(dataset, device, stats_list, args):
     #Define the model name for saving
     model_name='model_nl'+str(args.num_layers)+'_bs'+str(args.batch_size) + \
                '_hd'+str(args.hidden_dim)+'_ep'+str(args.epochs)+'_wd'+str(args.weight_decay) + \
-               '_lr'+str(args.lr)+'_shuff_'+str(args.shuffle)+'_tr'+str(args.train_size)+'_te'+str(args.test_size)
+               '_lr'+str(args.lr)+'_shuff_'+str(args.shuffle)+'_tr'+str(args.train_size)+'_te'+str(args.val_size)
 
     #torch_geometric DataLoaders are used for handling the data of lists of graphs
-    loader = DataLoader(dataset[:args.train_size], batch_size=args.batch_size, shuffle=False)
-    test_loader = DataLoader(dataset[args.train_size:], batch_size=args.batch_size, shuffle=False)
+    loader = DataLoader(dataset[:args.train_size], batch_size=args.batch_size, shuffle=args.shuffle)
+    val_loader = DataLoader(dataset[args.train_size:], batch_size=args.batch_size, shuffle=args.shuffle)
 
-    #The statistics of the data are decomposed
+    #The statistics of the data are decomposed and moved to device
     [mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y] = stats_list
     (mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y)=(mean_vec_x.to(device),
         std_vec_x.to(device),mean_vec_edge.to(device),std_vec_edge.to(device),mean_vec_y.to(device),std_vec_y.to(device))
 
-    # build model
-    num_node_features = dataset[0].x.shape[1]
-    num_edge_features = dataset[0].edge_attr.shape[1]
-    num_classes = 2 # the dynamic variables have the shape of 2 (velocity)
-
-    model = MeshGraphNet(num_node_features, num_edge_features, args.hidden_dim, num_classes,
-                            args).to(device)
+    model = model.to(device)
+   
     scheduler, opt = build_optimizer(args, model.parameters())
+    loss_fn = build_loss(args)
 
     # train
     losses = []
-    test_losses = []
-    velo_val_losses = []
-    best_test_loss = np.inf
+    val_losses = []
+    best_val_loss = np.inf
     best_model = None
     for epoch in trange(args.epochs, desc="Training", unit="Epochs"):
         total_loss = 0
         model.train()
         num_loops=0
         for batch in loader:
-            #Note that normalization must be done before it's called. The unnormalized
-            #data needs to be preserved in order to correctly calculate the loss
+            #to(device) moves the data to the device (CPU or GPU)
             batch=batch.to(device)
+            #normalize data
+            batch = normalize_data(batch,mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y)
             opt.zero_grad()         #zero gradients each time
-            pred = model(batch,mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge)
-            loss = model.loss(pred,batch,mean_vec_y,std_vec_y)
+            pred = model(batch)
+            loss = loss_fn(pred, batch.y)
             loss.backward()         #backpropagate loss
             opt.step()
             total_loss += loss.item()
@@ -70,21 +68,31 @@ def train(dataset, device, stats_list, args):
         losses.append(total_loss)
 
 
-        #Every tenth epoch, calculate acceleration test loss and velocity validation loss
-        if epoch % 2 == 0:
+        #Every x epoch, calculate val loss, save metrics and get best model
+        if epoch % 1 == 0:
 
-            test_loss = test(test_loader,device,model,mean_vec_x,std_vec_x,mean_vec_edge,
-                                std_vec_edge,mean_vec_y,std_vec_y)
+            #test_loss = test(test_loader,device,model,mean_vec_x,std_vec_x,mean_vec_edge,
+            #                    std_vec_edge,mean_vec_y,std_vec_y)
+            val_loss  = 0
+            num_loops=0
+            for batch in val_loader:
+                batch = batch.to(device)
+                batch = normalize_data(batch,mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y)
+                pred = model(batch)
+                with torch.no_grad():
+                    val_loss += loss_fn(pred, batch.y)
+                num_loops+=1
+            val_loss /= num_loops
 
-            test_losses.append(test_loss.item())
-            scheduler.step(test_loss.item()) if scheduler else None
+            val_losses.append(val_loss.item())
+            scheduler.step(val_loss.item()) if scheduler else None
 
-
-            wandb.log({
-                'test_loss': test_loss.item(),
-                'train_loss': total_loss
-            })
-
+            if args.wandb_log:
+                wandb.log({
+                    'test_loss': val_loss.item(),
+                    'train_loss': total_loss
+                })
+                
             # saving model
             if not os.path.isdir(args.checkpoint_dir ):
                 os.mkdir(args.checkpoint_dir)
@@ -93,27 +101,27 @@ def train(dataset, device, stats_list, args):
             df.to_csv(PATH,index=False)
 
             #save the model if the current one is better than the previous best
-            if test_loss < best_test_loss:
-                best_test_loss = test_loss
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
                 best_model = copy.deepcopy(model)
 
         else:
             #If not the tenth epoch, append the previously calculated loss to the
             #list in order to be able to plot it on the same plot as the training losses
-            test_losses.append(test_losses[-1])
+            val_losses.append(val_losses[-1])
 
-        df = pd.concat([df, pd.DataFrame({'epoch': [epoch], 'train_loss': losses[-1:], 'test_loss': test_losses[-1:]})] )
+        df = pd.concat([df, pd.DataFrame({'epoch': [epoch], 'train_loss': losses[-1:], 'test_loss': val_losses[-1:]})] )
         
         if(epoch%2==0):
             
-            print("train loss", str(round(total_loss,2)), "test loss", str(round(test_loss.item(),2)))
+            print("train loss", str(round(total_loss,2)), "test loss", str(round(val_loss.item(),2)))
 
             if(args.save_best_model):
 
                 PATH = os.path.join(args.checkpoint_dir, model_name+'.pt')
                 torch.save(best_model.state_dict(), PATH )
 
-    return test_losses, losses, velo_val_losses, best_model, best_test_loss, test_loader,model_name
+    return val_losses, losses, best_model, best_val_loss, val_loader,model_name
 
 def test(loader,device,test_model,
          mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y):
@@ -128,12 +136,11 @@ def test(loader,device,test_model,
     for data in loader:
         data=data.to(device)
         with torch.no_grad():
-
             #calculate the loss for the model given the test set
-            pred = test_model(data,mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge)
+            pred = test_model(data)
             loss += test_model.loss(pred, data,mean_vec_y,std_vec_y)
         num_loops+=1
-        # if velocity is evaluated, return velo_rmse as 0
+
     return loss/num_loops
 
 def build_optimizer(args, params):
@@ -160,6 +167,14 @@ def build_optimizer(args, params):
     return scheduler, optimizer
 
 
+def build_loss(args):
+    if args.loss == 'mse':
+        return torch.nn.MSELoss()
+    elif args.loss == 'l1':
+        return torch.nn.L1Loss()
+    elif args.loss == 'huber':
+        return torch.nn.HuberLoss()
+
 class objectview(object):
     def __init__(self, d):
         self.__dict__ = d
@@ -168,38 +183,40 @@ class objectview(object):
 
 def main(
     dataset_dir='../data_graphs/centered_graphs',
-    model_type='meshgraphnet',
+    model_type='gunet',
     num_layers=10,
-    batch_size=8,
+    batch_size=4,
     hidden_dim=10,
-    epochs=2000,
+    epochs=10,
     opt='adamW',
     opt_scheduler='plateau',
     opt_restart=0,
+    loss='mse',
     weight_decay=5e-4,
-    lr=0.1,
-    train_size=270,
-    test_size=60,
-    device='cuda',
+    lr=0.0001,
+    train_size=260,
+    val_size=60,
+    device='cpu',
     shuffle=True,
-    save_velo_val=False,
     save_best_model=True,
     checkpoint_dir='../best_models/',
     postprocess_dir='./2d_loss_plots/',
-    wandb_sweep: bool = True
+    wandb_sweep: bool = False,
+    wandb_log: bool = False
 ):
 
     #wandb init
-    wandb.login()
+    if wandb_log:
+        wandb.login()
 
-    if wandb_sweep:
-        with open('./sweep_config.yml', 'r') as file:
-            wd_config = yaml.safe_load(file)
-        
-        run = wandb.init(config=wd_config, entity='franamor98')
+        if wandb_sweep:
+            with open('./sweep_config.yml', 'r') as file:
+                wd_config = yaml.safe_load(file)
+            
+            run = wandb.init(config=wd_config, entity='franamor98')
 
-        lr = wandb.config.lr
-        weight_decay = wandb.config.weight_decay
+            lr = wandb.config.lr
+            weight_decay = wandb.config.weight_decay
 
     for args in [
             {
@@ -211,17 +228,18 @@ def main(
                 'opt': opt,
                 'opt_scheduler': opt_scheduler,
                 'opt_restart': opt_restart,
+                'loss': loss,
                 'weight_decay': weight_decay,
                 'lr': lr,
                 'train_size': train_size,
-                'test_size': test_size,
+                'val_size': val_size,
                 'device': device,
                 'shuffle': shuffle,
-                'save_velo_val': save_velo_val,
                 'save_best_model': save_best_model,
                 'checkpoint_dir': checkpoint_dir,
                 'postprocess_dir': postprocess_dir,
-                "opt_decay_step": 10
+                "opt_decay_step": 10,
+                "wandb_log": wandb_log
             },
         ]:
             args = objectview(args)
@@ -238,11 +256,12 @@ def main(
     # Load dataset
     graph_files = [i for i in os.listdir(dataset_dir) if "list" not in i and "pt" in i]
     graph_files = sorted(graph_files,key=lambda x:int(x.split("_")[-1].split(".")[0]))
+    print("Number of files in dataset: ", len(graph_files))
     try:
-        graph_files = graph_files[:train_size + test_size]
+        graph_files = graph_files[:train_size + val_size]
         
     except:
-        print('Dataset is smaller than train_size + test_size')
+        print('Dataset is smaller than train_size + val_size')
 
     dataset = []
     for file in graph_files:
@@ -253,13 +272,11 @@ def main(
     dataset = torch.load("../data_graphs/graph_list.pt")
     print(len(dataset))
     try:
-        dataset = dataset[:args.train_size+args.test_size]
+        dataset = dataset[:args.train_size+args.val_size]
     except:
-        print('Dataset is smaller than train_size + test_size')
+        print('Dataset is smaller than train_size + val_size')
     """
-    if shuffle:
-        random.shuffle(dataset)
-    
+  
     print(len(dataset))
 
     # Create checkpoint directory if it does not exist
@@ -269,24 +286,33 @@ def main(
     # Compute stats
     stats_list = compute_stats_batch(dataset)
 
+    #create the model
+    num_node_features = dataset[0].x.shape[1]
+    num_edge_features = dataset[0].edge_attr.shape[1]
+    num_classes = 2 # the dynamic variables have the shape of 2 (velocity)
+
+    if args.model_type == 'meshgraphnet':
+        model = MeshGraphNet(num_node_features, num_edge_features, args.hidden_dim, num_classes,
+                            args)
+    if args.model_type == 'gunet':
+        model = GUNet(num_node_features, num_classes)
     # Train
-    test_losses, losses, velo_val_losses, best_model, best_test_loss, test_loader, model_name = train(dataset, device, stats_list,args)
+    val_losses, losses, best_model, best_val_loss, test_loader,model_name = train(dataset,model, device, stats_list,args)
 
     # Log metrics to WandB
-    """
     
-    wandb.log({
-        'min_test_loss': min(test_losses),
-        'min_loss': min(losses),
-        'best_model': model_name,
-    })
-    """
+    if args.wandb_log:
+        wandb.log({
+            'min_test_loss': min(val_losses),
+            'min_loss': min(losses),
+            'best_model': model_name,
+        })
+    
 
-    print("Min test set loss: {0}".format(min(test_losses)))
+    print("Min test set loss: {0}".format(min(val_losses)))
     print("Minimum loss: {0}".format(min(losses)))
     print("Best model: {0}".format(model_name))
-    if save_velo_val:
-        print("Minimum velocity validation loss: {0}".format(min(velo_val_losses)))
+    
 
 
 if __name__ == "__main__":

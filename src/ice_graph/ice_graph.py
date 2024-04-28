@@ -154,16 +154,46 @@ class Nextsim_data():
 
         return vertex_data_list
 
-
-    def compute_acceleration(self,time_index:int):
+    def compute_velocity(self,time_index:int):
         """
-        Function to compute the acceleration of a given vertex.
+        Function to compute the velocity.
 
         Arguments:
             time_index: int
                 index of the time to sample from
-            vertex_i: int
-                index of the vertex to sample from
+        """
+
+        d0 = self.vertex_data_list[time_index-1]
+        d1 = self.vertex_data_list[time_index]
+
+        #compute vel between d0 and d1
+        _,comm01, comm10 = np.intersect1d(d0['i'], d1['i'], assume_unique=True, return_indices=True)
+        # get common X, Y coordinates
+        x0 = d0['x'][comm01]
+        y0 = d0['y'][comm01]
+        x1 = d1['x'][comm10]
+        y1 = d1['y'][comm10]
+
+        # compute drift [m/s] for two files separated by delta time
+        u = (x1 - x0) / (self.d_time)
+        v = (y1 - y0) / (self.d_time)
+        if len(v) != len(d0['x']):
+            u_interp = LinearNDInterpolator(list(zip(x0, y0)), u)
+            v_interp = LinearNDInterpolator(list(zip(x0, y0)), v)
+
+            v = v_interp( d0['x'],  d0['y'])
+            u = u_interp( d0['x'],  d0['y'])
+
+        return torch.stack([torch.tensor(u),torch.tensor(v)],dim=1)
+    
+
+    def compute_acceleration(self,time_index:int):
+        """
+        Function to compute the acceleration .
+
+        Arguments:
+            time_index: int
+                index of the time to sample from
         returns:    
             acceleration: torch.tensor
                 tensor of acceleration
@@ -180,7 +210,7 @@ class Nextsim_data():
         x1 = d1['x'][comm10]
         y1 = d1['y'][comm10]
 
-        # compute drift [m/s] for two files separated by 1 hour
+        # compute drift [m/s] for two files separated by delta time
         u0 = (x1 - x0) / (self.d_time)
         v0 = (y1 - y0) / (self.d_time)
 
@@ -193,7 +223,7 @@ class Nextsim_data():
         x2 = d2['x'][comm21]
         y2 = d2['y'][comm21]
 
-        # compute drift [m/s] for two files separated by 1 hour
+        # compute drift [m/s] for two files separated by delta time
         u1 = (x2 - x1) / (self.d_time)
         v1 = (y2 - y1) / (self.d_time)
 

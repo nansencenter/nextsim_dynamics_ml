@@ -35,7 +35,7 @@ def triangles_to_edges(faces):
 
 
 
-def generate_full_graph(time, file_graphs,out_path,start_time,delta_t):
+def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity):
 
     #generate a nextsim object with 3 time steps
     nextsim = Ice_graph(
@@ -44,6 +44,7 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t):
         d_time=delta_t
     )
     #set time to one to get the current time in our 3 steps window
+    time_file = time
     time = 1
 
     forcing_interp = nextsim.get_forcings(time-1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y','Concentration','Thickness'])
@@ -96,8 +97,10 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t):
     y = ((v_t1 - v_t0) / delta_t).type(torch.float)
     """
 
-
-    y = nextsim.compute_acceleration(time)
+    if velocity:
+        y = nextsim.compute_velocity(time).type(torch.float)
+    else:
+        y = nextsim.compute_acceleration(time).type(torch.float)
   
 
 
@@ -106,7 +109,7 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t):
     mesh_pos = torch.stack((torch.tensor(vertex_data['x']), torch.tensor(vertex_data['y'])), dim=1).type(torch.float)
 
     data =  Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos)
-    file_name = f"graph_{time+start_time}.pt"
+    file_name = f"graph_{time_file+start_time}.pt"
     #save in path
     torch.save(data, os.path.join(out_path, file_name))
 
@@ -118,7 +121,7 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t):
     return file_name
 
 
-def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,radius=100000):
+def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,velocity,radius=100000):
 
     #generate a nextsim object with 3 time steps
     nextsim = Ice_graph(
@@ -127,6 +130,7 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
         d_time=delta_t
     )
     #set time to one to get the current time in our 3 steps window
+    time_file = time
     time = 1
     vertex_data = nextsim.get_item(time,elements=False)
     element_data = nextsim.get_item(time,elements=True)
@@ -134,6 +138,7 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
         central_vertex_index = np.where(vertex_data['i'] == vertex_i)[0][0]
     except:
         print(f"Vertex {vertex_i} not found in time {time}")
+        exit()
 
     center_x = vertex_data['x'][central_vertex_index]
     center_y = vertex_data['y'][central_vertex_index]
@@ -200,8 +205,10 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
     v_t0=torch.stack((torch.tensor(ice_u),torch.tensor(inextsimce_v)),dim=1)
     y = ((v_t1 - v_t0) / delta_t).type(torch.float)
     """
-   
-    y = nextsim.compute_acceleration(time)[vertex_index]
+    if velocity:
+        y = nextsim.compute_velocity(time)[vertex_index].type(torch.float)
+    else:
+        y = nextsim.compute_acceleration(time)[vertex_index].type(torch.float)
     
     #Data needed for visualization code
     cells = torch.tensor(element_data['t'][vertex_index]).type(torch.float)
@@ -209,7 +216,7 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
 
     data =  Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos)
 
-    file_name = f"graph_{time+start_time}.pt"
+    file_name = f"graph_{time_file+start_time}.pt"
     #save in path
     torch.save(data, os.path.join(out_path, file_name))
 
@@ -224,14 +231,15 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
 
 def main(
         data_path: str = '../../week_data',
-        out_path: str = '../data_graphs/centered_graphs',
+        out_path: str = '../data_graphs/centered_graphs_vel',
         save_name: str = 'graph_list.pt',
         delta_t: int = 1800,
-        start_time: int = 25,
-        end_time: int = 120,
+        start_time: int = 0,
+        end_time: int = 330,
         crop: bool = True,
-        vertex_i: int = 26039, #precompute on notebook
-        radius: int = 400000
+        vertex_i: int = 46527, #precompute on notebook
+        radius: int = 400000,
+        velocity = True
 ):
 
     # Create output directory if it does not exist
@@ -259,14 +267,13 @@ def main(
 
   
 
-
     graph_list = []
     if crop:
         for time in trange(1, len(file_graphs)-1):
-            graph_list.append(generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,radius))
+            graph_list.append(generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,velocity,radius))
     else:
         for time in trange(1, len(file_graphs)-1):
-            graph_list.append(generate_full_graph(time, file_graphs,out_path,start_time,delta_t))
+            graph_list.append(generate_full_graph(time, file_graphs,out_path,start_time,delta_t,velocity))
 
     torch.save(graph_list, os.path.join(out_path, save_name))
 

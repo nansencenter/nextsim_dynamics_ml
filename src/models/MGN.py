@@ -61,14 +61,14 @@ class MeshGraphNet(torch.nn.Module):
         return ProcessorLayer
 
 
-    def forward(self,data,mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge):
+    def forward(self,data):
         """
         Encoder encodes graph (node/edge features) into latent vectors (node/edge embeddings)
         The return of processor is fed into the processor for generating new feature vectors
         """
         x, edge_index, edge_attr = data.x, data.edge_index, data.edge_attr
-        x = normalize(x,mean_vec_x,std_vec_x)
-        edge_attr=normalize(edge_attr,mean_vec_edge,std_vec_edge)
+        #x = normalize(x,mean_vec_x,std_vec_x)
+        #edge_attr=normalize(edge_attr,mean_vec_edge,std_vec_edge)
 
         # Step 1: encode node/edge features into latent node/edge embeddings
         x = self.node_encoder(x) # output shape is the specified hidden dimension

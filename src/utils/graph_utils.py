@@ -6,6 +6,18 @@ from torch_geometric.loader import DataLoader
 
 
 
+def normalize_data(data, mean_x, std_x, mean_edge, std_edge, mean_y, std_y):
+    """
+    Normalize the input data
+    """
+   
+    data.x = ((data.x - mean_x) / std_x).float()  # Convert to float
+    data.edge_attr = ((data.edge_attr - mean_edge) / std_edge).float()  # Convert to float
+    data.y = ((data.y - mean_y) / std_y).float()  # Convert to float
+    return data
+
+
+
 def normalize(to_normalize,mean_vec,std_vec):
     """
     Compute the normalization of the input data

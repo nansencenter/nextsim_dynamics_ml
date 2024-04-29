@@ -177,12 +177,12 @@ class Nextsim_data():
         # compute drift [m/s] for two files separated by delta time
         u = (x1 - x0) / (self.d_time)
         v = (y1 - y0) / (self.d_time)
-        if len(v) != len(d0['x']):
+        if len(v) != len(d1['x']):
             u_interp = LinearNDInterpolator(list(zip(x0, y0)), u)
             v_interp = LinearNDInterpolator(list(zip(x0, y0)), v)
 
-            v = v_interp( d0['x'],  d0['y'])
-            u = u_interp( d0['x'],  d0['y'])
+            v = v_interp( d1['x'],  d1['y'])
+            u = u_interp( d1['x'],  d1['y'])
 
         return torch.stack([torch.tensor(u),torch.tensor(v)],dim=1)
     

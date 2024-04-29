@@ -103,13 +103,16 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity)
         y = nextsim.compute_acceleration(time).type(torch.float)
   
 
+    #possible nan due to interpolator, really small percent
+    y = torch.nan_to_num(y)
+
 
     # Data needed for visualization code
     cells = torch.tensor(element_data['t']).type(torch.float)
     mesh_pos = torch.stack((torch.tensor(vertex_data['x']), torch.tensor(vertex_data['y'])), dim=1).type(torch.float)
 
     data =  Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos)
-    file_name = f"graph_{time_file+start_time}.pt"
+    file_name = f"graph_{velocity}_{time_file+start_time}.pt"
     #save in path
     torch.save(data, os.path.join(out_path, file_name))
 
@@ -209,6 +212,9 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
         y = nextsim.compute_velocity(time)[vertex_index].type(torch.float)
     else:
         y = nextsim.compute_acceleration(time)[vertex_index].type(torch.float)
+
+    #possible nan due to interpolator, really small percent
+    y = torch.nan_to_num(y)
     
     #Data needed for visualization code
     cells = torch.tensor(element_data['t'][vertex_index]).type(torch.float)
@@ -216,7 +222,7 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
 
     data =  Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos)
 
-    file_name = f"graph_{time_file+start_time}.pt"
+    file_name = f"graph_{velocity}_{vertex_i}_{time_file+start_time}.pt"
     #save in path
     torch.save(data, os.path.join(out_path, file_name))
 
@@ -231,12 +237,12 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
 
 def main(
         data_path: str = '../../week_data',
-        out_path: str = '../data_graphs/centered_graphs_vel',
+        out_path: str = '../data_graphs/full_arctic_vel',
         save_name: str = 'graph_list.pt',
         delta_t: int = 1800,
         start_time: int = 0,
         end_time: int = 330,
-        crop: bool = True,
+        crop: bool = False,
         vertex_i: int = 46527, #precompute on notebook
         radius: int = 400000,
         velocity = True
@@ -264,6 +270,7 @@ def main(
 
     print(f'Loaded {len(file_graphs)} files')
     print(f'cropped graph: {crop}')
+    print(f"velocity: {velocity}")
 
   
 

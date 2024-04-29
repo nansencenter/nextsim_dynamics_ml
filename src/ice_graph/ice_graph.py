@@ -207,33 +207,33 @@ class Nextsim_data():
         # get common X, Y coordinates
         x0 = d0['x'][comm01]
         y0 = d0['y'][comm01]
-        x1 = d1['x'][comm10]
-        y1 = d1['y'][comm10]
+        x1_0 = d1['x'][comm10]
+        y1_0 = d1['y'][comm10]
 
         # compute drift [m/s] for two files separated by delta time
-        u0 = (x1 - x0) / (self.d_time)
-        v0 = (y1 - y0) / (self.d_time)
+        u0 = (x1_0 - x0) / (self.d_time)
+        v0 = (y1_0 - y0) / (self.d_time)
 
 
         #compute vel between d1 and d2
         _,comm12, comm21 = np.intersect1d(d1['i'], d2['i'], assume_unique=True, return_indices=True)
         # get common X, Y coordinates
-        x1 = d1['x'][comm12]
-        y1 = d1['y'][comm12]
+        x1_1 = d1['x'][comm12]
+        y1_1 = d1['y'][comm12]
         x2 = d2['x'][comm21]
         y2 = d2['y'][comm21]
 
         # compute drift [m/s] for two files separated by delta time
-        u1 = (x2 - x1) / (self.d_time)
-        v1 = (y2 - y1) / (self.d_time)
+        u1 = (x2 - x1_1) / (self.d_time)
+        v1 = (y2 - y1_1) / (self.d_time)
 
-        if len(x0) != len(x1):
+        if len(x0) != len(x2):
         
-            u0_interp = LinearNDInterpolator(list(zip(x0, y0)), u0)
-            v0_interp = LinearNDInterpolator(list(zip(x0, y0)), v0)
+            u0_interp = LinearNDInterpolator(list(zip(x1_0, y1_0)), u0)
+            v0_interp = LinearNDInterpolator(list(zip(x1_0, y1_0)), v0)
 
-            u1_interp = LinearNDInterpolator(list(zip(x1, y1)), u1)
-            v1_interp = LinearNDInterpolator(list(zip(x1, y1)), v1)
+            u1_interp = LinearNDInterpolator(list(zip(x1_1, y1_1)), u1)
+            v1_interp = LinearNDInterpolator(list(zip(x1_1, y1_1)), v1)
 
             v0 = v0_interp( d1['x'],  d1['y'])
             u0 = u0_interp( d1['x'],  d1['y'])

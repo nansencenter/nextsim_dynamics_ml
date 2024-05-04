@@ -131,6 +131,29 @@ def velocity_angle(pred_vel,target_vel: torch.tensor):
 
 
 
+
+
+
+class StepForwardLoss(nn.Module):
+    def __init__(self, loss=nn.MSELoss()):
+        super(StepForwardLoss, self).__init__()
+        self.loss_fn = loss
+   
+
+    def forward(self,v_pred,v_real,input,mask):
+
+        v_pred = v_pred[mask]
+        v_real = v_real[mask]
+        input = input[mask]
+
+        error_target = self.loss_fn(v_pred,v_real)
+        error_input = self.loss_fn(v_pred,input)
+
+        error = error_target * (error_target / (error_input + 1e-12))
+
+        return  error
+
+
 class CustomIceLoss(nn.Module):
     def __init__(self, A=1,B=0,C=0,step=1,d_time=3600):
         super(CustomIceLoss, self).__init__()

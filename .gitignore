@@ -11,7 +11,7 @@ data/
 figures/
 data_graphs/
 animation/
-best_models/
+best_models*
 src/wandb/
 
 # Distribution / packaging

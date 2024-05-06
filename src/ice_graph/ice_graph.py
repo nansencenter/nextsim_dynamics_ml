@@ -154,7 +154,7 @@ class Nextsim_data():
 
         return vertex_data_list
 
-    def compute_velocity(self,time_index:int):
+    def compute_velocity(self,time_index:int,interp_field=None):
         """
         Function to compute the velocity.
 
@@ -163,8 +163,8 @@ class Nextsim_data():
                 index of the time to sample from
         """
 
-        d0 = self.vertex_data_list[time_index-1]
-        d1 = self.vertex_data_list[time_index]
+        d0 = self.vertex_data_list[time_index]
+        d1 = self.vertex_data_list[time_index+1]
 
         #compute vel between d0 and d1
         _,comm01, comm10 = np.intersect1d(d0['i'], d1['i'], assume_unique=True, return_indices=True)
@@ -174,15 +174,26 @@ class Nextsim_data():
         x1 = d1['x'][comm10]
         y1 = d1['y'][comm10]
 
+
+        #add triangulation (x1,y1)
+        # interpolate by time not x,y
+        ### TODO ###
+
+
         # compute drift [m/s] for two files separated by delta time
         u = (x1 - x0) / (self.d_time)
         v = (y1 - y0) / (self.d_time)
-        if len(v) != len(d1['x']):
-            u_interp = LinearNDInterpolator(list(zip(x0, y0)), u)
-            v_interp = LinearNDInterpolator(list(zip(x0, y0)), v)
 
-            v = v_interp( d1['x'],  d1['y'])
-            u = u_interp( d1['x'],  d1['y'])
+        u_interp = LinearNDInterpolator(list(zip(x0, y0)), u)
+        v_interp = LinearNDInterpolator(list(zip(x0, y0)), v)
+
+        if interp_field is None:
+            interp_field = [d0['x'],d0['y']]
+
+        v = v_interp( interp_field[0],  interp_field[1])
+        u = u_interp( interp_field[0],  interp_field[1])
+
+        
 
         return torch.stack([torch.tensor(u),torch.tensor(v)],dim=1)
     
@@ -227,19 +238,18 @@ class Nextsim_data():
         u1 = (x2 - x1_1) / (self.d_time)
         v1 = (y2 - y1_1) / (self.d_time)
 
-        if len(x0) != len(x2):
         
-            u0_interp = LinearNDInterpolator(list(zip(x1_0, y1_0)), u0)
-            v0_interp = LinearNDInterpolator(list(zip(x1_0, y1_0)), v0)
+        u0_interp = LinearNDInterpolator(list(zip(x1_0, y1_0)), u0)
+        v0_interp = LinearNDInterpolator(list(zip(x1_0, y1_0)), v0)
 
-            u1_interp = LinearNDInterpolator(list(zip(x1_1, y1_1)), u1)
-            v1_interp = LinearNDInterpolator(list(zip(x1_1, y1_1)), v1)
+        u1_interp = LinearNDInterpolator(list(zip(x1_1, y1_1)), u1)
+        v1_interp = LinearNDInterpolator(list(zip(x1_1, y1_1)), v1)
 
-            v0 = v0_interp( d1['x'],  d1['y'])
-            u0 = u0_interp( d1['x'],  d1['y'])
+        v0 = v0_interp( d1['x'],  d1['y'])
+        u0 = u0_interp( d1['x'],  d1['y'])
 
-            v1 = v1_interp( d1['x'],  d1['y'])
-            u1 = u1_interp( d1['x'],  d1['y'])
+        v1 = v1_interp( d1['x'],  d1['y'])
+        u1 = u1_interp( d1['x'],  d1['y'])
 
 
         #compute acceleration

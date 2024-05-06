@@ -44,9 +44,17 @@ def compute_stats_batch(graph_list:list):
             list of mean and std of the features, edge attributes and targets
         
     """
-
+    eps=torch.tensor(1e-15)
     item = next(iter(DataLoader(graph_list, batch_size=len(graph_list), shuffle=False)))
-    stats_list = item.x.mean(dim=0),item.x.std(dim=0),item.edge_attr.mean(dim=0),item.edge_attr.std(dim=0),item.y.mean(dim=0),item.y.std(dim=0)
+    x_mean = item.x.mean(dim=0)
+    x_std = torch.maximum(item.x.std(dim=0),eps)
+    edge_attr_mean = item.edge_attr.mean(dim=0)
+    edge_attr_std = torch.maximum(item.edge_attr.std(dim=0),eps)
+
+    item.y = torch.nan_to_num(item.y,nan=0.0)
+    y_mean = item.y.mean(dim=0)
+    y_std = torch.maximum(item.y.std(dim=0),eps)
+    stats_list = [x_mean,x_std,edge_attr_mean,edge_attr_std,y_mean,y_std]
 
     return stats_list
 

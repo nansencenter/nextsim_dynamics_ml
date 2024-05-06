@@ -35,7 +35,12 @@ def triangles_to_edges(faces):
 
 
 
-def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity):
+def generate_full_graph_edge(time, file_graphs,out_path,start_time,delta_t, velocity):
+
+    file_name = f"graph_{velocity}_edge_{time+start_time}.pt"
+
+    if os.path.exists(os.path.join(out_path, file_name)):
+        return file_name
 
     #generate a nextsim object with 3 time steps
     nextsim = Ice_graph(
@@ -44,33 +49,30 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity)
         d_time=delta_t
     )
     #set time to one to get the current time in our 3 steps window
-    time_file = time
     time = 1
 
-    forcing_interp = nextsim.get_forcings(time-1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y','Concentration','Thickness'])
+    forcing_interp = nextsim.get_forcings(time,['Concentration','Thickness'])
     vertex_data = nextsim.get_item(time, elements=False)
     element_data = nextsim.get_item(time, elements=True)
 
-    wind_u = torch.tensor(forcing_interp['M_wind_x'](vertex_data['x'],vertex_data['y']))
-    wind_v = torch.tensor(forcing_interp['M_wind_y'](vertex_data['x'],vertex_data['y']))
-    ocean_u = torch.tensor(forcing_interp['M_ocean_x'](vertex_data['x'],vertex_data['y']))
-    ocean_v = torch.tensor(forcing_interp['M_ocean_y'](vertex_data['x'],vertex_data['y']))
-    ice_u = torch.tensor(forcing_interp['M_VT_x'](vertex_data['x'],vertex_data['y']))
-    ice_v = torch.tensor(forcing_interp['M_VT_y'](vertex_data['x'],vertex_data['y']))
+    wind_u = torch.tensor(vertex_data["M_wind_x"])
+    wind_v = torch.tensor(vertex_data["M_wind_y"])
+    ocean_u = torch.tensor(vertex_data["M_ocean_x"])
+    ocean_v = torch.tensor(vertex_data["M_ocean_y"])
     concentration = torch.tensor(forcing_interp['Concentration'](vertex_data['x'],vertex_data['y']))
-    thickness = torch.tensor(forcing_interp['Thickness'](vertex_data['x'],vertex_data['y']))
+
+    node_type = torch.where(concentration > 0, torch.tensor(0), torch.tensor(1))
+
+    ice_vel = nextsim.compute_velocity(time-1,interp_field=[vertex_data['x'],vertex_data['y']] ).type(torch.float)
+    ice_u = ice_vel[:,0]
+    ice_v = ice_vel[:,1]
 
     # Replace nan with 0
-    wind_u = torch.nan_to_num(wind_u)
-    wind_v = torch.nan_to_num(wind_v)
-    ocean_u = torch.nan_to_num(ocean_u)
-    ocean_v = torch.nan_to_num(ocean_v)
     ice_u = torch.nan_to_num(ice_u)
     ice_v = torch.nan_to_num(ice_v)
-    concentration = torch.nan_to_num(concentration)
-    thickness = torch.nan_to_num(thickness)
+   
 
-    x = torch.stack((ice_u, ice_v, wind_u, wind_v, ocean_u, ocean_v, concentration, thickness), dim=1).type(torch.float)
+    x = torch.stack((ice_u, ice_v, wind_u, wind_v, ocean_u, ocean_v, node_type), dim=1).type(torch.float)
 
     edge_index = triangles_to_edges(element_data['t']).type(torch.long)
 
@@ -84,19 +86,17 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity)
          torch.tensor(vertex_data['y'])[edge_index[1]]),
         dim=1
     )
+    edge_center = (u_i+u_j)/2
+
+    concentration = torch.nan_to_num(torch.tensor(forcing_interp['Concentration'](edge_center[:,0],edge_center[:,1]))).unsqueeze(1)
+    thickness = torch.nan_to_num(torch.tensor(forcing_interp['Thickness'](edge_center[:,0],edge_center[:,1]))).unsqueeze(1)
+    
     u_ij = u_i - u_j
     u_ij_norm = torch.norm(u_ij, p=2, dim=1, keepdim=True)
-    edge_attr = torch.cat((u_ij, u_ij_norm), dim=-1).type(torch.float)
-    """
-    v_t1 = torch.stack(
-        (torch.tensor(vertex_data['M_VT_x']),
-         torch.tensor(vertex_data['M_VT_y'])),
-        dim=1
-    )
-    v_t0 = torch.stack((torch.tensor(ice_u), torch.tensor(ice_v)), dim=1)
-    y = ((v_t1 - v_t0) / delta_t).type(torch.float)
-    """
 
+
+    edge_attr = torch.cat((u_ij, u_ij_norm,concentration,thickness), dim=-1).type(torch.float)
+    
     if velocity:
         y = nextsim.compute_velocity(time).type(torch.float)
     else:
@@ -106,13 +106,94 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity)
     #possible nan due to interpolator, really small percent
     y = torch.nan_to_num(y)
 
+    # Data needed for visualization code
+    cells = torch.tensor(element_data['t']).type(torch.float)
+    mesh_pos = torch.stack((torch.tensor(vertex_data['x']), torch.tensor(vertex_data['y'])), dim=1).type(torch.float)
+
+    data =  Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos, edge_center=edge_center)
+    #save in path
+    torch.save(data, os.path.join(out_path, file_name))
+
+    del data
+    del element_data
+    del vertex_data
+    del nextsim
+
+    return file_name
+
+def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity):
+
+    file_name = f"graph_{velocity}_{time+start_time}.pt"
+
+    if os.path.exists(os.path.join(out_path, file_name)):
+        return file_name
+
+    #generate a nextsim object with 3 time steps
+    nextsim = Ice_graph(
+        file_graphs[time-1:time+2],
+        vertex_element_features=['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y', 'x', 'y'],
+        d_time=delta_t
+    )
+    #set time to one to get the current time in our 3 steps window
+    time = 1
+
+    forcing_interp = nextsim.get_forcings(time,['Concentration','Thickness'])
+    vertex_data = nextsim.get_item(time, elements=False)
+    element_data = nextsim.get_item(time, elements=True)
+
+    wind_u = torch.tensor(vertex_data["M_wind_x"])
+    wind_v = torch.tensor(vertex_data["M_wind_y"])
+    ocean_u = torch.tensor(vertex_data["M_ocean_x"])
+    ocean_v = torch.tensor(vertex_data["M_ocean_y"])
+    concentration = torch.tensor(forcing_interp['Concentration'](vertex_data['x'],vertex_data['y']))
+    thickness = torch.tensor(forcing_interp['Thickness'](vertex_data['x'],vertex_data['y']))
+
+    node_type = torch.where(concentration > 0, torch.tensor(0), torch.tensor(1))
+
+    ice_vel = nextsim.compute_velocity(time-1,interp_field=[vertex_data['x'],vertex_data['y']] ).type(torch.float)
+    ice_u = ice_vel[:,0]
+    ice_v = ice_vel[:,1]
+
+    # Replace nan with 0
+    ice_u = torch.nan_to_num(ice_u)
+    ice_v = torch.nan_to_num(ice_v)
+    concentration = torch.nan_to_num(concentration)
+    thickness = torch.nan_to_num(thickness)
+
+
+    x = torch.stack((ice_u, ice_v, wind_u, wind_v, ocean_u, ocean_v, concentration, thickness, node_type), dim=1).type(torch.float)
+
+    edge_index = triangles_to_edges(element_data['t']).type(torch.long)
+
+    u_i = torch.stack(
+        (torch.tensor(vertex_data['x'])[edge_index[0]],
+         torch.tensor(vertex_data['y'])[edge_index[0]]),
+        dim=1
+    )
+    u_j = torch.stack(
+        (torch.tensor(vertex_data['x'])[edge_index[1]],
+         torch.tensor(vertex_data['y'])[edge_index[1]]),
+        dim=1
+    )
+
+    u_ij = u_i - u_j
+    u_ij_norm = torch.norm(u_ij, p=2, dim=1, keepdim=True)
+    edge_attr = torch.cat((u_ij, u_ij_norm), dim=-1).type(torch.float)
+    
+    if velocity:
+        y = nextsim.compute_velocity(time).type(torch.float)
+    else:
+        y = nextsim.compute_acceleration(time).type(torch.float)
+  
+
+    #possible nan due to interpolator, really small percent
+    y = torch.nan_to_num(y)
 
     # Data needed for visualization code
     cells = torch.tensor(element_data['t']).type(torch.float)
     mesh_pos = torch.stack((torch.tensor(vertex_data['x']), torch.tensor(vertex_data['y'])), dim=1).type(torch.float)
 
     data =  Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos)
-    file_name = f"graph_{velocity}_{time_file+start_time}.pt"
     #save in path
     torch.save(data, os.path.join(out_path, file_name))
 
@@ -125,6 +206,11 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity)
 
 
 def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,velocity,radius=100000):
+    
+    file_name = f"graph_crop_{velocity}_{vertex_i}_{time+start_time}.pt"
+
+    if os.path.exists(os.path.join(out_path, file_name)):
+        return file_name
 
     #generate a nextsim object with 3 time steps
     nextsim = Ice_graph(
@@ -133,7 +219,6 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
         d_time=delta_t
     )
     #set time to one to get the current time in our 3 steps window
-    time_file = time
     time = 1
     vertex_data = nextsim.get_item(time,elements=False)
     element_data = nextsim.get_item(time,elements=True)
@@ -150,29 +235,29 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
     _,vertex_index = nextsim.get_samples_area((center_x,center_y),radius,time,elements=False)
     elements_index = np.where(np.isin(element_data['t'],vertex_index))[0]
 
-    forcing_interp = nextsim.get_forcings(time-1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'M_VT_x', 'M_VT_y','Concentration','Thickness'])
+    forcing_interp = nextsim.get_forcings(time,['Concentration','Thickness'])
 
-    wind_u = torch.tensor(forcing_interp['M_wind_x'](vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]))
-    wind_v = torch.tensor(forcing_interp['M_wind_y'](vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]))
-    ocean_u = torch.tensor(forcing_interp['M_ocean_x'](vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]))
-    ocean_v = torch.tensor(forcing_interp['M_ocean_y'](vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]))
-    ice_u = torch.tensor(vertex_data['M_VT_x'][vertex_index])
-    ice_v = torch.tensor(vertex_data['M_VT_y'][vertex_index])
+    wind_u = torch.tensor(vertex_data["M_wind_x"][vertex_index])
+    wind_v = torch.tensor(vertex_data["M_wind_y"][vertex_index])
+    ocean_u = torch.tensor(vertex_data["M_ocean_x"][vertex_index])
+    ocean_v = torch.tensor(vertex_data["M_ocean_y"][vertex_index])
     concentration = torch.tensor(forcing_interp['Concentration'](vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]))
     thickness = torch.tensor(forcing_interp['Thickness'](vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]))
 
+    node_type = torch.where(concentration > 0, torch.tensor(0), torch.tensor(1))
+
+    ice_vel = nextsim.compute_velocity(time-1,interp_field=[vertex_data['x'][vertex_index],vertex_data['y'][vertex_index]] ).type(torch.float)
+    ice_u = ice_vel[:,0]
+    ice_v = ice_vel[:,1]
+
     #replace nan to 0, bad practice
-    wind_u = torch.nan_to_num(wind_u)
-    wind_v = torch.nan_to_num(wind_v)
-    ocean_u = torch.nan_to_num(ocean_u)
-    ocean_v = torch.nan_to_num(ocean_v)
     ice_u = torch.nan_to_num(ice_u)
     ice_v = torch.nan_to_num(ice_v)
     concentration = torch.nan_to_num(concentration)
     thickness = torch.nan_to_num(thickness)
 
 
-    x = torch.stack((ice_u,ice_v,wind_u,wind_v,ocean_u,ocean_v,concentration,thickness),dim=1).type(torch.float)
+    x = torch.stack((ice_u,ice_v,wind_u,wind_v,ocean_u,ocean_v,concentration,thickness,node_type),dim=1).type(torch.float)
     
     edge_index = triangles_to_edges(element_data['t'][elements_index]).type(torch.long)
 
@@ -198,16 +283,6 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
     u_ij_norm = torch.norm(u_ij,p=2,dim=1,keepdim=True)
     edge_attr = torch.cat((u_ij,u_ij_norm),dim=-1).type(torch.float)
 
-    """
-    v_t1 = torch.stack(
-        (torch.tensor(vertex_data['M_VT_x'][vertex_index]),
-        torch.tensor(vertex_data['M_VT_y'][vertex_index])),
-        dim=1
-    )
-
-    v_t0=torch.stack((torch.tensor(ice_u),torch.tensor(inextsimce_v)),dim=1)
-    y = ((v_t1 - v_t0) / delta_t).type(torch.float)
-    """
     if velocity:
         y = nextsim.compute_velocity(time)[vertex_index].type(torch.float)
     else:
@@ -222,7 +297,6 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
 
     data =  Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, cells=cells, mesh_pos=mesh_pos)
 
-    file_name = f"graph_{velocity}_{vertex_i}_{time_file+start_time}.pt"
     #save in path
     torch.save(data, os.path.join(out_path, file_name))
 
@@ -237,10 +311,10 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
 
 def main(
         data_path: str = '../../week_data',
-        out_path: str = '../data_graphs/full_arctic_vel',
+        out_path: str = '../data_graphs/edge_elements_vel',
         save_name: str = 'graph_list.pt',
         delta_t: int = 1800,
-        start_time: int = 0,
+        start_time: int = 48,
         end_time: int = 330,
         crop: bool = False,
         vertex_i: int = 46527, #precompute on notebook
@@ -280,7 +354,7 @@ def main(
             graph_list.append(generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,velocity,radius))
     else:
         for time in trange(1, len(file_graphs)-1):
-            graph_list.append(generate_full_graph(time, file_graphs,out_path,start_time,delta_t,velocity))
+            graph_list.append(generate_full_graph_edge(time, file_graphs,out_path,start_time,delta_t,velocity))
 
     torch.save(graph_list, os.path.join(out_path, save_name))
 

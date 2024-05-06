@@ -11,12 +11,110 @@ from torch_geometric.loader import DataLoader
 
 from models.MGN import MeshGraphNet
 from models.GUnet import GUNet
+from utils.metrics import StepForwardLoss
 from utils.graph_utils import compute_stats_batch
 from utils.graph_utils import normalize_data
 import wandb
 import yaml
 
+
+
+
 def train(dataset, model, device, stats_list, args):
+    df = pd.DataFrame(columns=['epoch', 'train_loss', 'test_loss'])
+    model_name = f"{args.dataset_dir.split('/')[-1]}_{args.model_type}_{args.loss}_{args.opt_scheduler}_nl{args.num_layers}_bs{args.batch_size}_hd{args.hidden_dim}_ep{args.epochs}_wd{args.weight_decay}_lr{args.lr}_shuff_{args.shuffle}_tr{args.train_size}_te{args.val_size}"
+    print(model_name)
+
+    loader = DataLoader(dataset[:args.train_size], batch_size=args.batch_size, shuffle=args.shuffle)
+    val_loader = DataLoader(dataset[args.train_size:], batch_size=args.batch_size, shuffle=False)
+    mean_vec_x, std_vec_x, mean_vec_edge, std_vec_edge, mean_vec_y, std_vec_y = [i.to(device) for i in stats_list]
+    model = model.to(device)
+    scheduler, opt = build_optimizer(args, model.parameters())
+    loss_fn = build_loss(args)
+    
+    losses = []
+    val_losses = []
+    best_val_loss = float('inf')
+    best_model = None
+    
+    for epoch in trange(args.epochs, desc="Training", unit="epoch"):
+        model.train()
+        total_loss = train_epoch(loader, model, loss_fn, opt, device, mean_vec_x, std_vec_x, mean_vec_edge, std_vec_edge, mean_vec_y, std_vec_y)
+        losses.append(total_loss)
+        
+        val_loss = validate_epoch(val_loader, model, loss_fn, device, mean_vec_x, std_vec_x, mean_vec_edge, std_vec_edge, mean_vec_y, std_vec_y)
+        val_losses.append(val_loss)
+        
+        if scheduler:
+            if isinstance(scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+                # For ReduceLROnPlateau, pass the validation loss as an argument
+                scheduler.step(val_loss)
+            else:
+                # For other types of schedulers, call step without arguments
+                scheduler.step()
+        
+        if args.wandb_log:
+            wandb.log({'val_loss': val_loss, 'train_loss': total_loss})
+        
+        update_checkpoints(epoch, args, model_name, best_val_loss, val_loss, model, df, losses, val_losses)
+        
+        if (epoch % 2 == 0):
+            print(f"Epoch {epoch}: Train Loss {total_loss:.5f}, Validation Loss {val_loss:.5f}")
+    
+    return val_losses, losses, best_model, best_val_loss, val_loader, model_name
+
+def update_checkpoints(epoch, args, model_name, best_val_loss, val_loss, model, df, losses, val_losses):
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        #print(f"Saving best model at epoch {epoch}")
+        best_model = copy.deepcopy(model)
+    df = pd.concat([df, pd.DataFrame({'epoch': [epoch], 'train_loss': [losses[-1]], 'test_loss': [val_losses[-1]]})])
+    if args.save_best_model and best_model:
+        save_path = os.path.join(args.checkpoint_dir, model_name + '.pt')
+        #print(f"Saving model at {save_path}")
+        torch.save(best_model.state_dict(), save_path)
+        df.to_csv(os.path.join(args.checkpoint_dir, model_name + '.csv'), index=False)
+
+def train_epoch(loader, model, loss_fn, optimizer, device, mean_vec_x, std_vec_x, mean_vec_edge, std_vec_edge, mean_vec_y, std_vec_y):
+    total_loss = 0
+    for batch in loader:
+        batch = batch.to(device)
+        
+        #node_type mask
+        mask = batch.x[:, -1] == 0
+
+        batch = normalize_data(batch, mean_vec_x, std_vec_x, mean_vec_edge, std_vec_edge, mean_vec_y, std_vec_y)
+        optimizer.zero_grad()
+        pred = model(batch)
+        if isinstance(loss_fn, StepForwardLoss):
+            loss = loss_fn(pred, batch.y, batch.x[:,:2],mask)
+        else:
+            loss = loss_fn(pred[mask], batch.y[mask])
+        loss.backward()
+        optimizer.step()
+        total_loss += loss.item()
+    return total_loss / len(loader)
+
+def validate_epoch(val_loader, model, loss_fn, device, mean_vec_x, std_vec_x, mean_vec_edge, std_vec_edge, mean_vec_y, std_vec_y):
+    val_loss = 0
+    model.eval()
+    with torch.no_grad():
+        for batch in val_loader:
+            batch = batch.to(device)
+            #node_type mask
+            mask = batch.x[:, -1] == 0
+            batch = normalize_data(batch, mean_vec_x, std_vec_x, mean_vec_edge, std_vec_edge, mean_vec_y, std_vec_y)
+            pred = model(batch)
+            if isinstance(loss_fn, StepForwardLoss):
+                val_loss += loss_fn(pred, batch.y, batch.x[:,:2],mask).item()
+            else:
+                val_loss += loss_fn(pred[mask], batch.y[mask]).item()
+    return val_loss / len(val_loader)
+
+
+
+
+def train2(dataset, model, device, stats_list, args):
     '''
     Performs a training loop on the dataset for MeshGraphNets. Also calls
     test and validation functions.
@@ -25,13 +123,13 @@ def train(dataset, model, device, stats_list, args):
     df = pd.DataFrame(columns=['epoch','train_loss','test_loss', 'velo_val_loss'])
 
     #Define the model name for saving
-    model_name='model_nl'+str(args.num_layers)+'_bs'+str(args.batch_size) + \
+    model_name=f'{args.model_type}_nl'+str(args.num_layers)+'_bs'+str(args.batch_size) + \
                '_hd'+str(args.hidden_dim)+'_ep'+str(args.epochs)+'_wd'+str(args.weight_decay) + \
                '_lr'+str(args.lr)+'_shuff_'+str(args.shuffle)+'_tr'+str(args.train_size)+'_te'+str(args.val_size)
 
     #torch_geometric DataLoaders are used for handling the data of lists of graphs
     loader = DataLoader(dataset[:args.train_size], batch_size=args.batch_size, shuffle=args.shuffle)
-    val_loader = DataLoader(dataset[args.train_size:], batch_size=args.batch_size, shuffle=args.shuffle)
+    val_loader = DataLoader(dataset[args.train_size:], batch_size=args.batch_size, shuffle=False)
 
     #The statistics of the data are decomposed and moved to device
     [mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y] = stats_list
@@ -39,7 +137,6 @@ def train(dataset, model, device, stats_list, args):
         std_vec_x.to(device),mean_vec_edge.to(device),std_vec_edge.to(device),mean_vec_y.to(device),std_vec_y.to(device))
 
     model = model.to(device)
-   
     scheduler, opt = build_optimizer(args, model.parameters())
     loss_fn = build_loss(args)
 
@@ -56,7 +153,12 @@ def train(dataset, model, device, stats_list, args):
             #to(device) moves the data to the device (CPU or GPU)
             batch=batch.to(device)
             #normalize data
+           
             batch = normalize_data(batch,mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y)
+            batch.y = torch.nan_to_num(batch.y,nan=0.0)
+            indices = torch.randperm(batch.y.size(0))
+            batch.y = batch.y[indices]
+
             opt.zero_grad()         #zero gradients each time
             pred = model(batch)
             loss = loss_fn(pred, batch.y)
@@ -78,18 +180,24 @@ def train(dataset, model, device, stats_list, args):
             for batch in val_loader:
                 batch = batch.to(device)
                 batch = normalize_data(batch,mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y)
+
+                batch.y = torch.nan_to_num(batch.y,nan=0.0)
+                
+                indices = torch.randperm(batch.y.size(0))
+                batch.y = batch.y[indices]
+
                 pred = model(batch)
-                with torch.no_grad():
-                    val_loss += loss_fn(pred, batch.y)
+                with torch.no_grad():  
+                    val_loss += loss_fn(pred, batch.y).item()
                 num_loops+=1
             val_loss /= num_loops
 
-            val_losses.append(val_loss.item())
-            scheduler.step(val_loss.item()) if scheduler else None
+            val_losses.append(val_loss)
+            scheduler.step(val_loss) if scheduler else None
 
             if args.wandb_log:
                 wandb.log({
-                    'test_loss': val_loss.item(),
+                    'val_loss': val_loss,
                     'train_loss': total_loss
                 })
                 
@@ -114,34 +222,15 @@ def train(dataset, model, device, stats_list, args):
         
         if(epoch%2==0):
             
-            print("train loss", str(round(total_loss,2)), "test loss", str(round(val_loss.item(),2)))
+            print("train loss", str(round(total_loss,2)), "test loss", str(round(val_loss,2)))
 
             if(args.save_best_model):
-
-                PATH = os.path.join(args.checkpoint_dir, model_name+'.pt')
-                torch.save(best_model.state_dict(), PATH )
+                if best_model:
+                    PATH = os.path.join(args.checkpoint_dir, model_name+'.pt')
+                    torch.save(best_model.state_dict(), PATH )
 
     return val_losses, losses, best_model, best_val_loss, val_loader,model_name
 
-def test(loader,device,test_model,
-         mean_vec_x,std_vec_x,mean_vec_edge,std_vec_edge,mean_vec_y,std_vec_y):
-
-    '''
-    Calculates test set losses .
-    '''
-
-    loss=0
-    num_loops=0
-
-    for data in loader:
-        data=data.to(device)
-        with torch.no_grad():
-            #calculate the loss for the model given the test set
-            pred = test_model(data)
-            loss += test_model.loss(pred, data,mean_vec_y,std_vec_y)
-        num_loops+=1
-
-    return loss/num_loops
 
 def build_optimizer(args, params):
     weight_decay = args.weight_decay
@@ -164,6 +253,8 @@ def build_optimizer(args, params):
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.opt_restart)
     elif args.opt_scheduler == 'plateau':
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
+    elif args.opt_scheduler == 'exp':
+        scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
     return scheduler, optimizer
 
 
@@ -174,6 +265,10 @@ def build_loss(args):
         return torch.nn.L1Loss()
     elif args.loss == 'huber':
         return torch.nn.HuberLoss()
+    elif args.loss == 'stepForwardMSE':
+        return StepForwardLoss()
+    elif args.loss == 'stepForwardL1':
+        return StepForwardLoss(loss=torch.nn.L1Loss())
 
 class objectview(object):
     def __init__(self, d):
@@ -182,24 +277,24 @@ class objectview(object):
 
 
 def main(
-    dataset_dir='../data_graphs/centered_graphs',
-    model_type='gunet',
-    num_layers=10,
+    dataset_dir='../data_graphs/full_arctic_vel',
+    model_type='meshgraphnet',
+    num_layers=6,
     batch_size=4,
-    hidden_dim=10,
-    epochs=10,
+    hidden_dim=6,
+    epochs=80,
     opt='adamW',
     opt_scheduler='plateau',
     opt_restart=0,
-    loss='mse',
-    weight_decay=5e-4,
-    lr=0.0001,
-    train_size=260,
-    val_size=60,
-    device='cpu',
+    loss='stepForwardMSE',
+    weight_decay=5e-3,
+    lr=0.00072,
+    train_size=255,
+    val_size=30,
+    device='cuda',
     shuffle=True,
     save_best_model=True,
-    checkpoint_dir='../best_models/',
+    checkpoint_dir='../best_models2/',
     postprocess_dir='./2d_loss_plots/',
     wandb_sweep: bool = False,
     wandb_log: bool = False
@@ -216,10 +311,20 @@ def main(
             run = wandb.init(config=wd_config, entity='franamor98')
 
             lr = wandb.config.lr
+            model_type = wandb.config.model_type
             weight_decay = wandb.config.weight_decay
+            dataset_dir = wandb.config.dataset_dir
+            num_layers = wandb.config.num_layers
+            batch_size = wandb.config.batch_size
+            hidden_dim = wandb.config.hidden_dim
+            #loss = wandb.config.loss
+
+        else:
+            run = wandb.init(project='nextsim', entity='franamor98')
 
     for args in [
-            {
+            {   
+                'dataset_dir': dataset_dir,
                 'model_type': model_type,
                 'num_layers': num_layers,
                 'batch_size': batch_size,
@@ -254,7 +359,7 @@ def main(
     np.random.seed(5)
 
     # Load dataset
-    graph_files = [i for i in os.listdir(dataset_dir) if "list" not in i and "pt" in i]
+    graph_files = [i for i in os.listdir(dataset_dir) if "list" not in i and "pt" in i][40:]
     graph_files = sorted(graph_files,key=lambda x:int(x.split("_")[-1].split(".")[0]))
     print("Number of files in dataset: ", len(graph_files))
     try:
@@ -285,6 +390,9 @@ def main(
     
     # Compute stats
     stats_list = compute_stats_batch(dataset)
+
+    if args.shuffle:
+        pass#random.shuffle(dataset)
 
     #create the model
     num_node_features = dataset[0].x.shape[1]

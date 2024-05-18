@@ -3,11 +3,51 @@ import torch
 import random
 import torch_scatter
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn import Linear, Sequential, LayerNorm, ReLU
-from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.conv import MessagePassing, GCNConv
 import sys
 sys.path.append('../src')
 from utils.graph_utils import normalize
+
+
+class MeshGraphNetWithDiffusion(torch.nn.Module):
+    def __init__(self, mgn_model, diffusion_model, noise_level, diffusion_steps):
+        super(MeshGraphNetWithDiffusion, self).__init__()
+        self.mgn_model = mgn_model
+        self.diffusion_model = diffusion_model
+        self.noise_level = noise_level
+        self.diffusion_steps = diffusion_steps
+
+    def add_noise(self, data):
+        noisy_data = data.clone()
+        noisy_data.x += self.noise_level * torch.randn_like(data.x)
+        return noisy_data
+
+    def forward(self, data):
+        noisy_data = self.add_noise(data)
+
+        for _ in range(self.diffusion_steps):
+            denoised_data = self.diffusion_model(noisy_data.x, noisy_data.edge_index)
+            noisy_data.x = noisy_data.x + denoised_data
+
+        output = self.mgn_model(noisy_data)
+        return output
+
+
+# Diffusion Model for Denoising
+class DiffusionModel(torch.nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(DiffusionModel, self).__init__()
+        self.conv1 = GCNConv(input_dim, hidden_dim)
+        self.conv2 = GCNConv(hidden_dim, hidden_dim)
+        self.conv3 = GCNConv(hidden_dim, output_dim)
+
+    def forward(self, x, edge_index):
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
+        x = self.conv3(x, edge_index)
+        return x
 
 
 

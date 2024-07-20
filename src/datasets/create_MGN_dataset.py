@@ -137,16 +137,23 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity)
     #set time to one to get the current time in our 3 steps window
     time = 1
 
-    forcing_interp = nextsim.get_forcings(time,['Concentration','Thickness'])
+    interp = nextsim.get_forcings(time,['Concentration'])
+    #forcing_interp = nextsim.get_forcings(time+1,['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y'])
     vertex_data = nextsim.get_item(time, elements=False)
     element_data = nextsim.get_item(time, elements=True)
 
-    wind_u = torch.tensor(vertex_data["M_wind_x"])
-    wind_v = torch.tensor(vertex_data["M_wind_y"])
-    ocean_u = torch.tensor(vertex_data["M_ocean_x"])
-    ocean_v = torch.tensor(vertex_data["M_ocean_y"])
-    concentration = torch.tensor(forcing_interp['Concentration'](vertex_data['x'],vertex_data['y']))
-    thickness = torch.tensor(forcing_interp['Thickness'](vertex_data['x'],vertex_data['y']))
+
+    #wind_u0 = torch.tensor(vertex_data["M_wind_x"])
+    #wind_v0 = torch.tensor(vertex_data["M_wind_y"])
+    #ocean_u0 = torch.tensor(vertex_data["M_ocean_x"])
+    #ocean_v0 = torch.tensor(vertex_data["M_ocean_y"])
+    #wind_u1 = torch.tensor(forcing_interp['M_wind_x'](vertex_data['x'],vertex_data['y']))
+    #wind_v1 = torch.tensor(forcing_interp['M_wind_y'](vertex_data['x'],vertex_data['y']))
+    #ocean_u1 = torch.tensor(forcing_interp['M_ocean_x'](vertex_data['x'],vertex_data['y']))
+    #ocean_v1 = torch.tensor(forcing_interp['M_ocean_y'](vertex_data['x'],vertex_data['y']))
+    concentration = torch.tensor(interp['Concentration'](vertex_data['x'],vertex_data['y']))
+    #thickness = torch.tensor(interp['Thickness'](vertex_data['x'],vertex_data['y']))
+    #damage = torch.tensor(interp['Damage'](vertex_data['x'],vertex_data['y']))
 
     node_type = torch.where(concentration > 0, torch.tensor(0), torch.tensor(1))
 
@@ -157,11 +164,19 @@ def generate_full_graph(time, file_graphs,out_path,start_time,delta_t, velocity)
     # Replace nan with 0
     ice_u = torch.nan_to_num(ice_u)
     ice_v = torch.nan_to_num(ice_v)
-    concentration = torch.nan_to_num(concentration)
-    thickness = torch.nan_to_num(thickness)
+    #wind_u1 = torch.nan_to_num(wind_u1)
+    #wind_v1 = torch.nan_to_num(wind_v1)
+    #ocean_u1 = torch.nan_to_num(ocean_u1)
+    #ocean_v1 = torch.nan_to_num(ocean_v1)
+    #concentration = torch.nan_to_num(concentration)
+    #thickness = torch.nan_to_num(thickness)
+    #damage = torch.nan_to_num(damage)
 
 
-    x = torch.stack((ice_u, ice_v, wind_u, wind_v, ocean_u, ocean_v, concentration, thickness, node_type), dim=1).type(torch.float)
+    #x = torch.stack((ice_u, ice_v,w, concentration, thickness, node_type), dim=1).type(torch.float)
+    x = torch.stack([
+        ice_u, ice_v,node_type
+    ], dim=1).type(torch.float)
 
     edge_index = triangles_to_edges(element_data['t']).type(torch.long)
 
@@ -310,8 +325,8 @@ def generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delt
 
 
 def main(
-        data_path: str = '../../week_data',
-        out_path: str = '../data_graphs/edge_elements_vel',
+        data_path: str = '../../nextsim_data',
+        out_path: str = '../data_graphs/onlyvel',
         save_name: str = 'graph_list.pt',
         delta_t: int = 1800,
         start_time: int = 48,
@@ -354,7 +369,7 @@ def main(
             graph_list.append(generate_centered_graph(time, file_graphs, vertex_i,out_path,start_time,delta_t,velocity,radius))
     else:
         for time in trange(1, len(file_graphs)-1):
-            graph_list.append(generate_full_graph_edge(time, file_graphs,out_path,start_time,delta_t,velocity))
+            graph_list.append(generate_full_graph(time, file_graphs,out_path,start_time,delta_t,velocity))
 
     torch.save(graph_list, os.path.join(out_path, save_name))
 

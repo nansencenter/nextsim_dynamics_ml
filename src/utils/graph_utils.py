@@ -3,7 +3,7 @@ import torch
 from torch_geometric.data import Data
 import torchvision.transforms as T
 from torch_geometric.loader import DataLoader
-
+from sklearn.preprocessing import QuantileTransformer
 
 
 def normalize_data(data, mean_x, std_x, mean_edge, std_edge, mean_y, std_y, channels = None):
@@ -21,6 +21,7 @@ def normalize_data(data, mean_x, std_x, mean_edge, std_edge, mean_y, std_y, chan
 
 
 
+
 def normalize(to_normalize,mean_vec,std_vec):
     """
     Compute the normalization of the input data
@@ -34,7 +35,7 @@ def unnormalize(to_unnormalize,mean_vec,std_vec):
     return to_unnormalize*std_vec+mean_vec
 
 
-def compute_stats_batch(graph_list:list):
+def compute_stats_batch(graph_list:list,acc=False):
     """
     Compute the mean and std of the features of the dataset
 
@@ -47,14 +48,19 @@ def compute_stats_batch(graph_list:list):
             list of mean and std of the features, edge attributes and targets
         
     """
-    eps=torch.tensor(1e-15)
+    eps=torch.tensor(1e-20)
     item = next(iter(DataLoader(graph_list, batch_size=len(graph_list), shuffle=False)))
     x_mean = item.x.mean(dim=0)
     x_std = torch.maximum(item.x.std(dim=0),eps)
     edge_attr_mean = item.edge_attr.mean(dim=0)
     edge_attr_std = torch.maximum(item.edge_attr.std(dim=0),eps)
 
-    item.y = torch.nan_to_num(item.y,nan=0.0)
+
+    if acc:
+        item.y = torch.nan_to_num(item.x[:,:2] - item.y,nan=0.0)
+    else:
+        item.y = torch.nan_to_num(item.y,nan=0.0)
+        
     y_mean = item.y.mean(dim=0)
     y_std = torch.maximum(item.y.std(dim=0),eps)
     stats_list = [x_mean,x_std,edge_attr_mean,edge_attr_std,y_mean,y_std]

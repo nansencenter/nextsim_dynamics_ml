@@ -8,7 +8,6 @@ __pycache__/
 
 #data and figures
 data/
-figures/
 data_graphs/
 animation/
 best_models*

@@ -1,22 +1,86 @@
 import numpy as np
 import torch 
 from torch_geometric.data import Data
+from tqdm import tqdm
+
+from utils.Tri_neighbors import TriNeighbors
+from scipy.interpolate import LinearNDInterpolator
 
 
+
+class IceData(Data):
+   """
+   Overwrite the torch geometric.Data class to adapt data for mini-batch processing
+   """
+   def __cat_dim__(self, key, value, *args, **kwargs):
+        if key == 'edge_index' or key =='pos':  #cat along dim 1
+            return 1
+        elif key == 'x': 
+            return 0 #cat along dim 0
+        elif key == 'y' or key == 'metadata':
+            return None # create a new batch dimension
+        else:
+            return super().__cat_dim__(key, value, *args, **kwargs)
 
 class Nextsim_data():
     """
     Class to manage data from nextsim outputs.
     """
     
-    def __init__(self,file_graphs,vertex_element_features: list[str] = ['x','y']) -> None:
+    def __init__(self,file_graphs,vertex_element_features: list[str] = ['x','y'],d_time:int = 3600, step = 1) -> None:
      
         self.file_graphs = file_graphs
-
+        self.d_time = d_time
+        self.step = step
         #get vertex and element data
         self.vertex_data_list = self.compute_vertex_data()
         self.element_data_list = self.compute_element_data(vertex_element_features)
+
+        self.tri_neighbors = {}
+        self.forcings = {}
+
+    def get_num_elements(self,time_index:int = 0):
+        return len(self.element_data_list[time_index]['x'])
     
+
+    def get_num_vertexs(self,time_index:int = 0):
+        return len(self.vertex_data_list[time_index]['x'])
+    
+
+    def get_tri_neighbors(self,time_index:int = 0):
+
+        if time_index not in self.tri_neighbors.keys():
+            self.tri_neighbors[time_index] = TriNeighbors(self.element_data_list[time_index]['t'])
+
+        return self.tri_neighbors[time_index]
+    
+    def get_forcings(self,time_index:int = 0,features: list[str] = ['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y']):
+        """
+        Function to get the interpolated forcing fields at a given time index.
+
+        Arguments:
+            time_index: int
+                index of the time to sample from
+            features: list[str]
+                list of features to interpolate
+
+        returns:
+            forcings: dict
+                dictionary of forcing fields
+
+        """
+        
+        if time_index not in self.forcings.keys() or not np.isin(features, self.forcings[time_index].keys()).all():
+            self.forcings[time_index] = {}
+            for feature in features:
+                if feature in self.vertex_data_list[time_index].keys():
+                    field = self.vertex_data_list[time_index]
+                else:
+                    field = self.element_data_list[time_index]
+
+                self.forcings[time_index][feature] = LinearNDInterpolator(list(zip(field['x'], field['y'])), field[feature])
+        
+        return self.forcings[time_index]
 
     def get_item(self, time_index:int = 0, elements:bool = True):
         """
@@ -90,6 +154,110 @@ class Nextsim_data():
 
         return vertex_data_list
 
+    def compute_velocity(self,time_index:int,interp_field=None):
+        """
+        Function to compute the velocity.
+
+        Arguments:
+            time_index: int
+                index of the time to sample from
+        """
+
+        d0 = self.vertex_data_list[time_index]
+        d1 = self.vertex_data_list[time_index+1]
+
+        #compute vel between d0 and d1
+        _,comm01, comm10 = np.intersect1d(d0['i'], d1['i'], assume_unique=True, return_indices=True)
+        # get common X, Y coordinates
+        x0 = d0['x'][comm01]
+        y0 = d0['y'][comm01]
+        x1 = d1['x'][comm10]
+        y1 = d1['y'][comm10]
+
+
+        #add triangulation (x1,y1)
+        # interpolate by time not x,y
+        ### TODO ###
+
+
+        # compute drift [m/s] for two files separated by delta time
+        u = (x1 - x0) / (self.d_time)
+        v = (y1 - y0) / (self.d_time)
+
+        u_interp = LinearNDInterpolator(list(zip(x0, y0)), u)
+        v_interp = LinearNDInterpolator(list(zip(x0, y0)), v)
+
+        if interp_field is None:
+            interp_field = [d0['x'],d0['y']]
+
+        v = v_interp( interp_field[0],  interp_field[1])
+        u = u_interp( interp_field[0],  interp_field[1])
+
+        
+
+        return torch.stack([torch.tensor(u),torch.tensor(v)],dim=1)
+    
+
+    def compute_acceleration(self,time_index:int):
+        """
+        Function to compute the acceleration .
+
+        Arguments:
+            time_index: int
+                index of the time to sample from
+        returns:    
+            acceleration: torch.tensor
+                tensor of acceleration
+        """
+        d0 = self.vertex_data_list[time_index-1]
+        d1 = self.vertex_data_list[time_index]
+        d2 = self.vertex_data_list[time_index+1]
+
+       #compute vel between d0 and d1
+        _,comm01, comm10 = np.intersect1d(d0['i'], d1['i'], assume_unique=True, return_indices=True)
+        # get common X, Y coordinates
+        x0 = d0['x'][comm01]
+        y0 = d0['y'][comm01]
+        x1_0 = d1['x'][comm10]
+        y1_0 = d1['y'][comm10]
+
+        # compute drift [m/s] for two files separated by delta time
+        u0 = (x1_0 - x0) / (self.d_time)
+        v0 = (y1_0 - y0) / (self.d_time)
+
+
+        #compute vel between d1 and d2
+        _,comm12, comm21 = np.intersect1d(d1['i'], d2['i'], assume_unique=True, return_indices=True)
+        # get common X, Y coordinates
+        x1_1 = d1['x'][comm12]
+        y1_1 = d1['y'][comm12]
+        x2 = d2['x'][comm21]
+        y2 = d2['y'][comm21]
+
+        # compute drift [m/s] for two files separated by delta time
+        u1 = (x2 - x1_1) / (self.d_time)
+        v1 = (y2 - y1_1) / (self.d_time)
+
+        
+        u0_interp = LinearNDInterpolator(list(zip(x1_0, y1_0)), u0)
+        v0_interp = LinearNDInterpolator(list(zip(x1_0, y1_0)), v0)
+
+        u1_interp = LinearNDInterpolator(list(zip(x1_1, y1_1)), u1)
+        v1_interp = LinearNDInterpolator(list(zip(x1_1, y1_1)), v1)
+
+        v0 = v0_interp( d1['x'],  d1['y'])
+        u0 = u0_interp( d1['x'],  d1['y'])
+
+        v1 = v1_interp( d1['x'],  d1['y'])
+        u1 = u1_interp( d1['x'],  d1['y'])
+
+
+        #compute acceleration
+        a = (u1 - u0) / (self.d_time)
+        b = (v1 - v0) / (self.d_time)
+
+
+        return torch.stack([torch.tensor(a),torch.tensor(b)],dim=1)
 
     def get_closer_neighbours(
             self,
@@ -130,7 +298,8 @@ class Nextsim_data():
             self,
             vertex_index:int,
             time_index:int = 0,
-            return_vertex:bool = False
+            return_vertex:bool = False,
+            n_neighbours:int = 1
     ):
         """ 
         Function to compute neighbourhood of a given vertex
@@ -152,12 +321,16 @@ class Nextsim_data():
         """
         
         elements = np.where(self.element_data_list[time_index]['t']==[vertex_index])[0]
+        adj_elements = elements #just adjacent elements (case neighbour = 1)
+
+        if n_neighbours>1:
+            elements = self.get_tri_neighbors(time_index).get_neighbors_many(elements,n_neighbours-1)
 
         vertexs = None
         if return_vertex:
             vertexs = np.unique(self.vertex_data_list[time_index]['t'][elements].flatten())
         
-        return elements,vertexs
+        return adj_elements,elements,vertexs
         
 
 
@@ -167,7 +340,7 @@ class Nextsim_data():
             central_coords: tuple[float,float],
             radius: float,
             time_index:int = 0,
-            n_samples:int = 1000,
+            n_samples:int = None,
             elements:bool = True,
     ):
         """
@@ -197,11 +370,14 @@ class Nextsim_data():
         x_center,y_center = central_coords
         #get the data that are inside the circle
         samples = np.where(np.sqrt((data['x']-x_center)**2 + (data['y']-y_center)**2)<radius)[0]
-        n_samples = min(n_samples,len(samples))
-        samples = np.random.choice(samples,n_samples)
+        if n_samples is not None:
+            n_samples = min(n_samples,len(samples))
+            samples = np.random.choice(samples,n_samples)
+
+        samples_i = data['i'][samples]
 
         
-        return samples
+        return samples_i,samples
         
 
     def get_vertex_trajectories(
@@ -223,6 +399,9 @@ class Nextsim_data():
         returns:
             trajectories : torch.tensor"""
 
+        if velocity:
+            iter += 1
+
         x,y = [],[]
         for mesh in self.vertex_data_list[time_index:time_index+iter]:
 
@@ -233,9 +412,8 @@ class Nextsim_data():
 
         x,y = torch.as_tensor(np.array(x)),torch.as_tensor(np.array(y)) 
         #return velocity instead of positions
-        #v = (coords[:,1,i] - coords[:,1,i+1]) / (1 * 60 * 60)
         if velocity:   
-            return torch.stack([x,y],dim=1).squeeze().diff(dim=-1).div(60*60)
+            return torch.stack([x,y],dim=1).squeeze().diff(dim=0).div(self.d_time)
         else:
             return torch.stack([x,y],dim=1).squeeze()
 
@@ -292,144 +470,76 @@ class Ice_graph(Nextsim_data):
     """
     Class to create torch geometric graphs data from nextsim outputs.
     """
-    def __init__(self,file_graphs,vertex_element_features: list[str] = ['x','y']) -> None:
-        super().__init__(file_graphs,vertex_element_features)
+    def __init__(self,file_graphs,vertex_element_features: list[str] = ['x','y'],d_time:int = 3600, step = 1) -> None:
+        super().__init__(file_graphs,vertex_element_features,d_time,step)
     
 
-    def get_element_graph(
+    def get_samples_graph(
             self,
-            element_index,
-            time_index:int = 0,
-            n_neighbours:int = 4,
+            central_coords: tuple[float,float],
+            radius: float,
+            time_indeces:list[int]=None,
+            n_samples:int = 1000,
             target_iter:int = 5,
-            features: list[str] = ['Damage', 'Concentration', 'Thickness', 'M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
-            predict_element:bool = True
+            e_features: list[str] = ['Concentration', 'Thickness', 'M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
+            include_vertex:bool = False,
+            pred_velocity:bool = False,
+            n_neighbours = 1,
+            future_forcing:bool = True
     ):
         """
-        Function to get the graph of a given element at a given time index.
+        Function to get the graph of a given area at a given time index.
 
         Arguments:
-            element_index: int
-                index of the element to sample from
-            time_index: int
-                index of the time to sample from
-            n_neighbours: int
-                number of neighbours as input (element included)
+            central_coords: tuple[float,float]
+                coordinates of the center of the circle
+            radius: float
+                radius of the circle
+            time_indeces: lies[int]
+                indeces of the time to sample from
+            n_samples: int
+                number of samples to return per time index
             target_iter: int
                 iteration to predict
-            predict_element: bool
-                if True, predict the element, else predict the vertexs positions
-        """
-        
-        data = self.get_item(time_index,elements=True)
-        #get the neighbours
-        neighbours = self.get_closer_neighbours(element_index,n_neighbours,time_index)
+            e_features: list[str]
+                list of features to include in the element graph
+            include_vertex: bool
+                if True, include the vertex graph
+            pred_velocity: bool
+                if True, predict the velocity instead of the position           
 
-        #get target coordinates
-        target = self.get_element_trajectories(time_index,element_index,target_iter+1,predict_element)
-        if len(target.shape)==1 or target.shape[1] != target_iter+1:
-            return None #skip vertexs / elements that disapear
-        target = target.flatten().to(torch.float32)/1000 #tokm
-        #store initial coordinates for visulisazion
-        x_center = data['x'][element_index]
-        y_center = data['y'][element_index]
-        element_coords = np.array([x_center,y_center])/1000 #tokm
-        y = [target,element_coords]
-
-        #get node features
-        node_features, features_indeces = self.__get_node_features(data,features,neighbours)
-
-        edge_index = self.__get_element_edge_index(data,neighbours)
-
-        #get edge distances and node positions
-        edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
-
-       
-        #Now we can create our torch-geometric graph using the "Data" class
-        graph = Data(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions, y=y)
-
-        return graph
-
-    
-
-    def get_vertex_graph(
-            self,
-            element_index,
-            time_index:int = 0,
-            n_neighbours:int = 4,
-            target_iter:int = 5,
-            features: list[str] = ['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
-            predict_element:bool = False
-    ):
-        """
-        Function to get the graph of vertex positions around a given mesh element at a given time index.
-
-        Arguments:
-            element_index: int
-                index of the element to sample from
-            time_index: int
-                index of the time to sample from   
-            n_neighbours: int   
-                number of neighbours as input (element included)
-            target_iter: int    
-                iteration to predict
-            predict_element: bool   
-                if True, predict the element, else predict the vertexs positions
         returns:
             graph: torch_geometric.Data
         """
-        
-        data = self.get_item(time_index,elements=False)
-        element_data = self.get_item(time_index,elements=True)
+        graph_list = []
 
-        #get target coordinates for the element
-        target = self.get_element_trajectories(time_index,element_index,target_iter+1,predict_element)
-        if len(target.shape)==1 or target.shape[1] != target_iter+1:
-            return None #skip vertexs / elements that disapear
-        target = target.flatten().to(torch.float32)/1000 #tokm
-        #store initial coordinates for visulisazion
-        x_center = element_data['x'][element_index]
-        y_center = element_data['y'][element_index]
-        element_coords = np.array([x_center,y_center])/1000 #tokm
-        y = [target,element_coords]
+        for t in time_indeces:
+            samples = self.get_samples_area(central_coords,radius,t,n_samples,False)
+            for sample in tqdm(samples, f"Generating samples at time {t}"):
+                graph = self.get_vertex_centered_graph(vertex_i=sample,time_index=t,target_iter=target_iter,e_features=e_features,include_vertex=include_vertex,velocity=pred_velocity,n_neighbours=n_neighbours,future_forcing=future_forcing)
+                if graph is not None:
+                    graph_list.append(graph)
 
-        #get the neighbours
-        neighbours = self.get_closer_neighbours(element_index,n_neighbours,time_index,elements=True)
-        #get the triangle vertexs of the neighbours
-        triangles = data['t'][neighbours]
-        #get_vertex neighbours indices
-        vertex_neighbours = np.unique(triangles.flatten())
-
-        #get node features for vertex information
-        node_features, features_indeces = self.__get_node_features(data,features,vertex_neighbours)
-
-        #Edge indeces are the edges between the vertex_neighbours
-        edge_index = self.__get_vertex_edge_index(vertex_neighbours,triangles)
-
-        #compute edge distances and node positions
-        edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
-       
-        #Now we can create our torch-geometric graph using the "Data" class
-        graph = Data(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions, y=y)
-
-        return graph
+        return graph_list
     
-
     def get_vertex_centered_graph(
             self,
-            vertex_index,
+            vertex_i,
             time_index:int = 0,
-            target_iter:int = 5,
+            target_iter:int = 1,
             e_features: list[str] = ['Damage', 'Concentration', 'Thickness', 'M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
-            v_features: list[str] = ['M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
-            include_vertex:bool = False
+            v_features: list[str] = ['M_VT_x','M_VT_y','M_wind_x', 'M_wind_y', 'M_ocean_x', 'M_ocean_y', 'x', 'y'],
+            include_vertex:bool = False,
+            velocity:bool = False,
+            n_neighbours:int = 1,
+            future_forcing:bool = True
     ):
         """
         Function to get the graph of elements around a given vertex at a given time index.
 
         Arguments:
             vertex_index: int
-                index of the vertex to sample from
+                i of the vertex to sample from
             time_index: int
                 index of the time to sample from
             target_iter: int
@@ -438,52 +548,87 @@ class Ice_graph(Nextsim_data):
             graph: torch_geometric.data.Data
 
         """
-        
+
         element_data = self.get_item(time_index,elements=True)
         vertex_data = self.get_item(time_index,elements=False)
+
+        #get vertex index
+        vertex_index = np.where(vertex_data['i']==vertex_i)[0][0]
         #get the neighbours
+        adj_elements,e_neighbours,v_neighbours = self.compute_vertex_neighbourhood(vertex_index=vertex_index,time_index=time_index,return_vertex=include_vertex,n_neighbours=n_neighbours)
 
-        
-        e_neighbours,v_neighbours = self.compute_vertex_neighbourhood(vertex_index=vertex_index,time_index=time_index,return_vertex=include_vertex)
-
+        #skip when there is no ice in adjacents elements 
+        if element_data['Concentration'][adj_elements].min() == 0:
+            return None
         #get target coordinates
-        vertex_i= vertex_data['i'][vertex_index]
-        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter=target_iter+1)
+        target = self.get_vertex_trajectories(time_index,vertex_i=vertex_i,iter= self.step,velocity=velocity).squeeze().to(torch.float32)
 
-        if len(target.shape)==1 or target.shape[0] != target_iter+1:
+        #Step
+        if  self.step>1 and len(target.size())>0 and target.shape[0] == self.step:
+            target = target.mean(dim=0)
+        elif self.step==1:
+            pass
+        else:
+            return None
+
+        if len(target.size())==0 or target.shape[0] != 2:
             return None    #skip vertexs / elements that disapear
-        target = target.flatten().to(torch.float32)/1000 #tokm
+
+        if not velocity:
+            target = target.flatten()
+
 
         #store initial coordinates for visulisazion
         vertex_idx = vertex_index
         x_center = vertex_data['x'][vertex_idx]
         y_center = vertex_data['y'][vertex_idx]
-        element_coords = np.array([x_center,y_center])/1000 #tokm
+        element_coords = torch.tensor(np.array([x_center,y_center]))
         y = [target,element_coords]
 
         #get node features
-        node_features, features_indeces = self.__get_node_features(element_data,e_features,e_neighbours)
+        if future_forcing:
+            node_features, features_indeces = self.__get_node_features(element_data,e_features,e_neighbours,time_index)
+        else:
+            node_features, features_indeces = self.__get_node_features(element_data,e_features,e_neighbours)
 
         #get edge features
         edge_index = self.__get_element_edge_index(element_data,e_neighbours,edge_conectivity=True)
 
         #get edge distances and node positions
         edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
+
+        #exclude xy
+        idx_no_xy = np.where(np.isin(features_indeces,['x','y'],invert=True))[0]
+        features_indeces = features_indeces[idx_no_xy]
+        node_features = node_features[:,idx_no_xy]
+
+        metadata = {
+            "time": time_index,
+            "vertex_i": vertex_data['i'][v_neighbours]
+        }
         #Now we can create our torch-geometric graph using the "Data" class
-        e_graph = Data(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions, y=y)
+        e_graph = IceData(x=node_features, edge_index=edge_index,edge_attr=edge_dist,pos=positions,y=y, metadata=metadata)
         v_graph = None
 
         if include_vertex:
             #get node features
-            node_features, features_indeces = self.__get_node_features(vertex_data,v_features,v_neighbours)
-            
+            if future_forcing:
+                node_features, features_indeces = self.__get_node_features(vertex_data,v_features,v_neighbours,time_index)
+            else:
+                node_features, features_indeces = self.__get_node_features(vertex_data,v_features,v_neighbours)
+                
             #get edge features
-            edge_index = self.__get_vertex_edge_index(vertex_neighbours=v_neighbours,triangles=element_data['t'][e_neighbours])
-
+            edge_index = self.get_vertex_edge_index(vertex_neighbours=v_neighbours,triangles=element_data['t'][e_neighbours])
             #get edge distances and node positions
             edge_dist,positions = self.__compute_edge_distances(feature_indeces=features_indeces,node_features=node_features,edge_index=edge_index)
+
+            #exclude xy
+            idx_no_xy = np.where(np.isin(features_indeces,['x','y'],invert=True))[0]
+            features_indeces = features_indeces[idx_no_xy]
+            node_features = node_features[:,idx_no_xy]
+           
             #Now we can create our torch-geometric graph using the "Data" class
-            v_graph = Data(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions, y=y)
+            v_graph = IceData(x=node_features, edge_index=edge_index, edge_attr=edge_dist,pos=positions,y=y,metadata=metadata)
 
         return e_graph, v_graph
 
@@ -491,7 +636,8 @@ class Ice_graph(Nextsim_data):
             self,
             field: dict,
             features: list[str],
-            indexes: np.array
+            indexes: np.array,
+            time_index:int = None
     ):
         """
         Function to get the node features of a given field.
@@ -503,6 +649,8 @@ class Ice_graph(Nextsim_data):
                 indexes of the elements to sample from
             features: list[str]
                 list of features 
+            time_index: int
+                index of the time to sample from
         returns:
             features: torch.tensor
                 tensor of features
@@ -516,13 +664,23 @@ class Ice_graph(Nextsim_data):
         for key,item in field.items():
             if key in features:
                 idx_list.append(key)
-                if key in ['x','y']: #convert to km if coordinates
-                    node_features.append(torch.tensor(np.array([item[indexes]/1000])))
-                else:
-                    node_features.append(torch.tensor(np.array([item[indexes]])))
+                node_features.append(torch.tensor(np.array([item[indexes]])))
+
+        if time_index is not None:
+            idx_x,idx_y = idx_list.index('x'),idx_list.index('y')
+            forcing = self.get_forcings(time_index+self.step)
+            for key,item in forcing.items():
+                if key in features and key not in ['M_VT_x','M_VT_y']:
+                    idx_list.append(f'{key}_f')
+                    node_features.append(torch.tensor(item(node_features[idx_x],node_features[idx_y])))
+                    #nan for some nodes on the mesh boundaries, quick fix -> replace with mean
+                    if torch.isnan(node_features[-1]).any():
+                        node_features[-1] = torch.nan_to_num(node_features[-1],torch.nanmean(node_features[-1]))
+                        
+                        
 
         node_features = torch.cat(node_features).t().to(torch.float32)
-        return node_features, idx_list
+        return node_features, np.array(idx_list)
     
     
 
@@ -577,7 +735,7 @@ class Ice_graph(Nextsim_data):
 
         return edge_index
     
-    def __get_vertex_edge_index(
+    def get_vertex_edge_index(
             self,
             vertex_neighbours: np.array,
             triangles: np.array
@@ -649,7 +807,7 @@ class Ice_graph(Nextsim_data):
                 )
                 for edge_row in edge_index
             ]
-            edge_dist = torch.norm(edges_coordinates[1] - edges_coordinates[0],dim=0).unsqueeze(dim=-1).to(torch.float32)/1000 #convert to km
+            edge_dist = torch.norm(edges_coordinates[1] - edges_coordinates[0],dim=0).unsqueeze(dim=-1).to(torch.float32) #convert to km
             #we also need to stack the node coordinates for the pos attribute
             positions = torch.stack(
                 [

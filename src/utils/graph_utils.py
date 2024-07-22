@@ -2,6 +2,95 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 import torchvision.transforms as T
+from torch_geometric.loader import DataLoader
+from sklearn.preprocessing import QuantileTransformer
+
+
+def normalize_data(data, mean_x, std_x, mean_edge, std_edge, mean_y, std_y, channels = None):
+    """
+    Normalize the input data
+    """
+    if channels is not None:
+        data.x[:,channels] = ((data.x[:,channels] - mean_x[channels]) / std_x[channels]).float()  # Convert to float
+    else:
+        data.x = ((data.x - mean_x) / std_x).float()
+    
+    data.edge_attr = ((data.edge_attr - mean_edge) / std_edge).float()  # Convert to float
+    data.y = ((data.y - mean_y) / std_y).float()  # Convert to float
+    return data
+
+
+
+
+def normalize(to_normalize,mean_vec,std_vec):
+    """
+    Compute the normalization of the input data
+    """
+    return (to_normalize-mean_vec)/std_vec
+
+def unnormalize(to_unnormalize,mean_vec,std_vec):
+    """
+    Compute the unnormalization of the input data
+    """
+    return to_unnormalize*std_vec+mean_vec
+
+
+def compute_stats_batch(graph_list:list,acc=False):
+    """
+    Compute the mean and std of the features of the dataset
+
+    Arguments:
+        graph_list: list
+            list of graphs
+
+    Returns:
+        stats_list: list
+            list of mean and std of the features, edge attributes and targets
+        
+    """
+    eps=torch.tensor(1e-20)
+    item = next(iter(DataLoader(graph_list, batch_size=len(graph_list), shuffle=False)))
+    x_mean = item.x.mean(dim=0)
+    x_std = torch.maximum(item.x.std(dim=0),eps)
+    edge_attr_mean = item.edge_attr.mean(dim=0)
+    edge_attr_std = torch.maximum(item.edge_attr.std(dim=0),eps)
+
+
+    if acc:
+        item.y = torch.nan_to_num(item.x[:,:2] - item.y,nan=0.0)
+    else:
+        item.y = torch.nan_to_num(item.y,nan=0.0)
+        
+    y_mean = item.y.mean(dim=0)
+    y_std = torch.maximum(item.y.std(dim=0),eps)
+    stats_list = [x_mean,x_std,edge_attr_mean,edge_attr_std,y_mean,y_std]
+
+    return stats_list
+
+
+## bellow the code is not used in the current implementation
+
+def compute_normalization_batch(graph_list:list):
+    """
+    Compute the normalization transform for the dataset
+
+    Arguments:
+        graph_list: list
+            list of graphs
+
+    Returns:
+        transfrom_e: transform for the element features
+        transform_v: transform for the vertex features   
+    """
+
+    batch_size = len(graph_list)
+    train_dataloader = DataLoader(graph_list, batch_size=batch_size)
+    graphs = next(iter(train_dataloader))
+    std_e,std_v = graphs[0].x.std(dim=0) + 1e-6 , graphs[1].x.std(dim=0) + 1e-6
+    mean_e,mean_v = graphs[0].x.mean(dim=0), graphs[1].x.mean(dim=0)
+    transfrom_e, transform_v = T.Normalize(mean=mean_e,std=std_e), T.Normalize(mean=mean_v,std=std_v)
+    
+    return transfrom_e, transform_v
 
 
 def standardize_graph(graph_list: list[Data],normalize_targets:bool = True):

@@ -4,9 +4,9 @@ from torch.utils.data import Dataset
 class Ice_graph_dataset(Dataset):
     def __init__(self, data_list, transform = None):
         super(Ice_graph_dataset, self).__init__()
-
+        
         # List of graphs
-        self.data_list = data_list
+        self.data_list = data_list.copy()
         self.transform = transform
 
     def __len__(self):
@@ -15,6 +15,7 @@ class Ice_graph_dataset(Dataset):
     def __getitem__(self, idx):
         data = self.data_list[idx]
         if self.transform is not None:
-            data.x = self.transform(data.x.unsqueeze(dim=0).moveaxis(-1,0)).squeeze().moveaxis(0,-1)
+            data[0].x = self.transform[0](data[0].x.unsqueeze(dim=0).moveaxis(-1,0)).squeeze().moveaxis(0,-1)
+            data[1].x = self.transform[1](data[1].x.unsqueeze(dim=0).moveaxis(-1,0)).squeeze().moveaxis(0,-1)
 
         return data
